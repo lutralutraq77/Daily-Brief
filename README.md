@@ -191,6 +191,58 @@ directly — RSS 2.0, Atom and RSS 1.0/RDF all parse.
 
 ---
 
+## The 3×3 plan
+
+A learning routine on three timescales. The **daily** tier is already the brief
+itself — *Paper of the day* and *News of the day* are two thirds of it — so what
+this section adds is the two tiers a morning fetch cannot supply.
+
+```bash
+python dailybrief.py 3x3 init
+```
+
+That writes `plan.json` and switches the section on. Then fill it in:
+
+```bash
+python dailybrief.py 3x3 start 2026-09-01
+python dailybrief.py 3x3 topic 1 "Psychoacoustics" --video "Lecture 4|https://..." \
+                                                   --text  "Moore, Psychology of Hearing" \
+                                                   --misc  "Ear-training course|https://..."
+python dailybrief.py 3x3 week "20 min app limit" "Tue/Thu 8-9pm blocked" "call, don't text"
+python dailybrief.py 3x3 score kept retry dropped
+python dailybrief.py 3x3 output "10-minute voice memo on masking"
+python dailybrief.py 3x3 status
+```
+
+**Weekly** — three changes, picked on your review day (`review_day`, default
+Sunday) and run for seven days. When the filed set falls behind the current week
+the brief marks it **stale** and keeps asking, because a review missed on Sunday
+that goes quiet on Monday is a review you will never do.
+
+**Monthly** — three topics, one calendar month each. Week 1 is the lecture
+video, week 2 the long-form text, week 3 the miscellaneous source, week 4 is
+producing an output. Week 4 is the tail of the month rather than a literal seven
+days, so a 31-day month cannot roll into a fifth week with no job. Month
+boundaries are calendar months with the day clamped to the target month's
+length, so a block starting 31 January hands over to its second topic on
+28 February rather than skipping into March.
+
+Two deliberate refusals, both the same principle:
+
+- **An empty slot is reported empty.** A topic with no sources says it has none
+  and names the command that fixes it. It never shows a blank where a source
+  should be, and `plan.example.json` ships with no topic names for the same
+  reason — nobody's plan should start with a subject they did not choose.
+- **A stale week is never shown as current.** Last week's three appear with
+  their filing date and a review prompt, not as though you picked them today.
+
+`plan.json` is gitignored like `config.json`; `plan.example.json` documents every
+field. Nothing here is fetched, so it is the one section that still renders on a
+morning the network is down — which is also the morning you most want to see
+what you committed to.
+
+---
+
 ## What's in it
 
 | Section | Source | Cost |
@@ -202,6 +254,7 @@ directly — RSS 2.0, Atom and RSS 1.0/RDF all parse.
 | Tech | Hacker News via Algolia, 1 request | keyless |
 | Paper of the day | newest arXiv submission in `paper_categories` (default `eess.AS`, `cs.SD`) | keyless |
 | News of the day | one story + standfirst from `featured_feed` (default Guardian Long Read) | keyless |
+| 3×3 | your `plan.json`: this week's three changes, this month's topic and its source | local, no network |
 | On this day | Wikimedia on-this-day feed | keyless |
 | Bank holiday | GOV.UK, **only** if one is within 10 days | keyless |
 
@@ -249,6 +302,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Time 07:15
 |---|---|
 | `dailybrief.py setup "City" --country GB` | Resolve and store your location |
 | `dailybrief.py run --force --open` | Generate now and open the window |
+| `dailybrief.py 3x3 status` | Where you are in the 3×3 plan (`init`, `start`, `topic`, `week`, `score`, `output`) |
 | `dailybrief.py check` | Hit every source, report what worked and how fast |
 | `dailybrief.py status` | Engine, location, sections, last run |
 | `dailybrief.py open` | Reopen the most recent brief |
@@ -323,10 +377,11 @@ quietly starts 403ing visible on the morning it happens.
 python tests\run_all.py
 ```
 
-Four suites, ~200 checks: the markdown renderer, the failure-mode hardening
-(feed parsing, encodings, tri-state sections), location/units settings, and the
-ICS/recurrence engine. Run them after changing anything in `netlib.py`,
-`icslib.py`, `sources.py` or the renderer.
+Five suites, ~320 checks: the markdown renderer, the failure-mode hardening
+(feed parsing, encodings, tri-state sections), location/units settings, the
+ICS/recurrence engine, and the 3×3 plan (month-boundary arithmetic, stale-week
+detection, both renderers). Run them after changing anything in `netlib.py`,
+`icslib.py`, `sources.py`, `plan.py` or the renderer.
 
 ## Uninstall
 

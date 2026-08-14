@@ -17,6 +17,7 @@
   },
   "sections": [
     "calendar",
+    "threexthree",
     "weather",
     "news",
     "tech",
@@ -75,7 +76,8 @@
   "_location": "Set EITHER city (with country to disambiguate) OR postcode. Edit one and the coordinates re-resolve automatically on the next run. To pin exact coordinates instead, clear city and postcode and set latitude/longitude yourself. `label` and `resolved_from` are written by the program -- do not edit them by hand.",
   "_units": "temperature: celsius | fahrenheit. wind: mph | kmh | ms | kn. precipitation: mm | inch. clock: 24h | 12h. Anything unrecognised falls back to metric.",
   "_bank_holiday_division": "Set automatically from your location: england-and-wales | scotland | northern-ireland. Scotland's calendar genuinely differs.",
-  "_sections": "Which sections render. Built-ins: weather, tech, onthisday, bankholiday. Any other name here is a feed section drawn from `feeds` below. `sources add` keeps this in step for you.",
+  "_sections": "Which sections render. Built-ins: weather, tech, onthisday, bankholiday, threexthree. Any other name here is a feed section drawn from `feeds` below. `sources add` keeps this in step for you.",
+  "_threexthree": "The 3x3 plan -- this week's three changes and this month's topic. Reads plan.json (see plan.example.json, or run `dailybrief.py 3x3 init`). It is the one section that needs no network, so it still renders on a morning the feeds are down.",
   "_feeds": "Manage with `dailybrief.py sources list|add|edit|remove|enable|disable|test` -- `add` fetches and parses the feed before saving, so a dead source cannot be added silently. Editing by hand works too. Each entry: name, url, section (the heading it appears under), max_items, max_age_hours (items older than this are ignored), enabled. Reuters and AP RSS are DEAD; CNN returns 200 but has been frozen since 2023.",
   "_section_titles": "Override a section heading, e.g. {\"audio\": \"Audio & DSP\"}. Sensible defaults exist for news, tech, audio, sport, science and local.",
   "_browser": "\"auto\" picks Edge/Chrome for a chromeless app window; \"default\" uses your default browser; or give a full path to an exe.",

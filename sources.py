@@ -773,6 +773,41 @@ def bank_holiday(today: dt.date, division: str = "england-and-wales", within_day
                    elapsed_ms=_since(started))
 
 
+def threexthree(today: dt.date, plan_path=None) -> Section:
+    """The 3x3 plan you wrote, read back and placed on today's calendar.
+
+    The only collector here that touches no network at all, which is the point:
+    the weekly three and the month's topic are commitments you already made, so
+    they must still show on a morning when every feed is down. `collect_sections`
+    keeps it out of the offline short-circuit for that reason.
+    """
+    started = _now_ms()
+    import plan as P
+
+    try:
+        data = P.load(plan_path) if plan_path else dict(P.DEFAULT_PLAN)
+        st = P.status(data, today)
+    except P.PlanError as exc:
+        return Section("threexthree", FAILED, reason=str(exc), elapsed_ms=_since(started))
+    except Exception as exc:  # noqa: BLE001 - see below
+        # Deliberately broad, and not merely defensive: `collect()` runs its jobs
+        # in a pool that turns any escaping exception into a FAILED section, but
+        # the offline path in collect_sections calls this function DIRECTLY. An
+        # AttributeError from a hand-edited plan.json would there take down the
+        # whole brief -- on precisely the morning the network is already gone.
+        return Section("threexthree", FAILED, reason=f"plan.json is malformed: {exc}",
+                       elapsed_ms=_since(started))
+
+    if not st["configured"]:
+        return Section("threexthree", EMPTY,
+                       reason="no plan yet - start one with `dailybrief.py 3x3 init`",
+                       elapsed_ms=_since(started))
+    # Gaps travel on `reason` the way a partly-failed feed group's do, so a
+    # half-filled plan still renders what it has and names what it is missing.
+    return Section("threexthree", OK, data=st, reason="; ".join(st["problems"]),
+                   elapsed_ms=_since(started))
+
+
 # ------------------------------------------------------------------ driver
 
 
@@ -812,6 +847,8 @@ def collect(cfg: dict, today: dt.date, deadline_s: int = 90, base_dir=None) -> d
     if "bankholiday" in enabled:
         jobs["bankholiday"] = lambda: bank_holiday(today, cfg.get("bank_holiday_division",
                                                                   "england-and-wales"))
+    if "threexthree" in enabled:
+        jobs["threexthree"] = lambda: threexthree(today, base / "plan.json")
 
     out: dict[str, Section] = {}
     with ThreadPoolExecutor(max_workers=max(1, len(jobs))) as pool:

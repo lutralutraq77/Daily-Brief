@@ -10,6 +10,9 @@ state.json
 # token granting read of the whole calendar. It must never be tracked.
 calendars.txt
 config.json
+# plan.json is your own 3x3 plan -- the topics you are learning and the changes
+# you are running. Personal, not secret; ships as plan.example.json.
+plan.json
 
 # --- local scratch ---
 sample-preview.html

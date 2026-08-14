@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SUITES = ["test_render.py", "test_hardening.py", "test_location.py", "test_ics.py"]
+SUITES = ["test_render.py", "test_hardening.py", "test_location.py", "test_ics.py",
+          "test_plan.py"]
 
 failed = []
 for suite in SUITES:

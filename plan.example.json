@@ -1,0 +1,48 @@
+{
+  "_comment": "The 3x3 plan. Copy to plan.json (or run `dailybrief.py 3x3 init`) and edit. The brief reads this every morning; nothing here is ever fetched or invented.",
+
+  "_start": "First day of the first month-block, YYYY-MM-DD. Each topic below gets one calendar month from this date, in order.",
+  "start": "2026-09-01",
+
+  "_review_day": "The day the weekly review falls on: monday ... sunday. The brief nags on this day, and keeps nagging while a stale set is still showing.",
+  "review_day": "sunday",
+
+  "_topics": "Three topics, one per month -- e.g. \"Psychoacoustics\", \"Ottoman history\", \"Bread fermentation\"; make at least one unrelated to your work, which is where being interesting about the unexpected comes from. Each has three sources: video (a lecture or talk), text (an article, book or long-form journalism), misc (a course, a series, anything). Week 1 is the video, week 2 the text, week 3 the misc, week 4 is producing the output. Names and sources are left blank on purpose: an empty slot is reported as empty, and the brief will never show a topic you did not choose.",
+  "topics": [
+    {
+      "name": "",
+      "sources": {
+        "video": {"title": "", "url": ""},
+        "text": {"title": "", "url": ""},
+        "misc": {"title": "", "url": ""}
+      },
+      "output": {"done": false, "note": ""}
+    },
+    {
+      "name": "",
+      "sources": {
+        "video": {"title": "", "url": ""},
+        "text": {"title": "", "url": ""},
+        "misc": {"title": "", "url": ""}
+      },
+      "output": {"done": false, "note": ""}
+    },
+    {
+      "name": "",
+      "sources": {
+        "video": {"title": "", "url": ""},
+        "text": {"title": "", "url": ""},
+        "misc": {"title": "", "url": ""}
+      },
+      "output": {"done": false, "note": ""}
+    }
+  ],
+
+  "_weekly": "Three changes you run for one week, picked on review day. `week_of` is the review day they were filed under -- when it falls behind the current week the brief flags them as stale rather than letting a month-old set masquerade as this week's. Set them with `3x3 week \"a\" \"b\" \"c\"`, score them with `3x3 score kept dropped retry`.",
+  "weekly": {
+    "week_of": "",
+    "changes": [],
+    "verdicts": [],
+    "history": []
+  }
+}

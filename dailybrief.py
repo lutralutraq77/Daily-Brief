@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
         "precipitation": "mm",        # mm | inch
         "clock": "24h",               # 24h | 12h
     },
-    "sections": ["calendar", "weather", "news", "tech", "paper", "featured",
+    "sections": ["calendar", "threexthree", "weather", "news", "tech", "paper", "featured",
                  "onthisday", "bankholiday"],
     # Paper of the day: newest arXiv submission in these categories.
     "paper_categories": ["eess.AS", "cs.SD"],
@@ -616,7 +616,7 @@ a {{ color: var(--color-accent); text-underline-offset: 3px; }}
 .feature-meta {{ display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }}
 .feature-meta .t {{ font-size: 11px; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--color-text) 55%, transparent); }}
 .feature-title {{ color: var(--color-text); text-decoration: none; font-size: 17px; line-height: 1.35; }}
-.feature-title:hover {{ color: var(--color-accent-300); text-decoration: underline; }}
+a.feature-title:hover {{ color: var(--color-accent-300); text-decoration: underline; }}
 .feature-body {{ margin: 0; font-size: 14px; line-height: 1.55; color: color-mix(in srgb, var(--color-text) 78%, transparent); text-wrap: pretty; }}
 .feature-foot {{ font-size: 12px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }}
 
@@ -624,6 +624,8 @@ a {{ color: var(--color-accent); text-underline-offset: 3px; }}
 .otd .yr {{ color: var(--color-accent); font-family: var(--font-heading); font-weight: var(--font-heading-weight); }}
 
 .unavail {{ font-size: 13px; color: color-mix(in srgb, var(--color-text) 55%, transparent); font-style: italic; }}
+/* The 3x3 section quotes commands you are meant to type, outside .prose. */
+.feature-body code, .wx-cond code {{ font: 12px/1.5 ui-monospace, Consolas, monospace; background: var(--code-bg); padding: 1.5px 5px; border-radius: var(--radius-sm); }}
 .notice {{
   margin: var(--space-4) 0; padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-accent-700); border-radius: var(--radius-md);
@@ -857,6 +859,53 @@ def compose_markdown(cfg: dict, today: dt.date, secs: dict, notices: list[str]) 
         out.append(f"*Bank holidays unavailable — {bh.reason}*")
     out.append("")
 
+    # --- 3x3 ----------------------------------------------------------------
+    tx = secs.get("threexthree")
+    if tx is not None:
+        import plan as P
+
+        out.append("## 3x3")
+        if tx.usable:
+            st = tx.data
+            blk, state = st.get("block"), st.get("block_state")
+            if state == "active":
+                left = blk["days_left"]
+                left_txt = "last day" if left == 0 else f"{left} day{'s' if left != 1 else ''} left"
+                out.append(f"**{blk['name']}** — month {blk['number']} of {blk['topic_count']}, "
+                           f"week {blk['week']}, {left_txt}.")
+                if blk["due"] == "output":
+                    out.append("- **This week: produce the output.** "
+                               + ("Already done." if blk["output_done"] else
+                                  "Ten minutes, one sitting, no editing."))
+                else:
+                    src = blk["source"]
+                    label = P.SLOT_LABELS.get(blk["due"], blk["due"])
+                    if src:
+                        out.append(f"- **This week: {label}** — {_md_link(src['title'], src['url'])}")
+                    else:
+                        out.append(f"- **This week: {label}** — *nothing lined up for this slot.*")
+                out.append(f"- Output due by {blk['month_end']:%a %d %b}.")
+            elif state == "not_started":
+                out.append(f"Block starts {blk['starts']:%a %d %b}.")
+            elif state == "finished":
+                out.append(f"Block finished {blk['ended']:%d %b} — pick three new topics.")
+
+            wk = st["weekly"]
+            if wk["changes"]:
+                stale = " *(last week's — due for review)*" if wk["stale"] else ""
+                out.append(f"\nThis week's three{stale}:")
+                for i, change in enumerate(wk["changes"], 1):
+                    out.append(f"{i}. {change}")
+            if wk["review_due"]:
+                out.append(f"\n*{wk['review_day'].title()} review — score these and pick three new ones.*")
+            if tx.reason:
+                out.append(f"\n*{tx.reason}*")
+        elif tx.status == S.EMPTY:
+            out.append(f"*{tx.reason}*")
+        else:
+            out.append(f"*3x3 plan unavailable — {tx.reason}*")
+        out.append("")
+
     # --- Feed sections, in the order the feeds are configured ---------------
     titles = dict(DEFAULT_SECTION_TITLES, **(cfg.get("section_titles") or {}))
     for section in S.feed_sections(cfg):
@@ -1023,6 +1072,7 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
     keeps the ok/empty/failed distinction the mock had no reason to carry.
     """
     import netlib
+    import plan as P
     import sources as S
 
     B: list[str] = []
@@ -1114,6 +1164,93 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
                          f'{" " + _esc(cal.reason) if cal.reason else ""}</p>')
         else:
             B.append(_unavail(cal.reason))
+
+    # --- 3x3 ------------------------------------------------------------------
+    tx = secs.get("threexthree")
+    if tx is not None:
+        B.append(_sect("3×3"))
+        if tx.usable:
+            st = tx.data
+            blk, state = st.get("block"), st.get("block_state")
+            if state == "active":
+                due = blk["due"]
+                left = blk["days_left"]
+                left_txt = "last day" if left == 0 else f"{left} day{'s' if left != 1 else ''} left"
+                B.append(
+                    '<div class="feature"><div class="feature-meta">'
+                    f'<span class="tag tag-outline">Month {blk["number"]} of {blk["topic_count"]}'
+                    f' · week {blk["week"]}</span>'
+                    f'<span class="t">{_esc(blk["name"])} · {_esc(left_txt)}</span></div>'
+                )
+                if due == "output":
+                    done = blk["output_done"]
+                    B.append(
+                        f'<span class="feature-title">{"Output produced" if done else "Produce the output"}</span>'
+                        f'<p class="feature-body">'
+                        + ("Done — this month is closed."
+                           if done else
+                           "Ten minutes, one sitting, no editing. Explain it as if to a friend; "
+                           "where you stall is what did not land. Mark it with "
+                           "<code>dailybrief.py 3x3 output</code>.")
+                        + f'</p><span class="feature-foot">Month ends {blk["month_end"]:%a %d %b}</span></div>'
+                    )
+                else:
+                    src = blk["source"]
+                    label = P.SLOT_LABELS.get(due, due)
+                    if src:
+                        title_html = (
+                            f'<a class="feature-title" href="{_esc(src["url"])}" '
+                            f'rel="noopener noreferrer">{_esc(src["title"])}</a>'
+                            if src["url"] else
+                            f'<span class="feature-title">{_esc(src["title"])}</span>'
+                        )
+                    else:
+                        title_html = ('<span class="feature-title">Nothing lined up for this '
+                                      'week\'s slot</span>')
+                    B.append(
+                        title_html
+                        + f'<p class="feature-body">This week: {_esc(label)}.'
+                        + ("" if src else
+                           " Add it with <code>dailybrief.py 3x3 topic</code> — "
+                           "the week has a job and no source to do it with.")
+                        + f'</p><span class="feature-foot">Output due by '
+                          f'{blk["month_end"]:%a %d %b}</span></div>'
+                    )
+            elif state == "not_started":
+                B.append(f'<p class="wx-cond">Block starts {blk["starts"]:%a %d %b} — '
+                         f'{blk["topic_count"]} topic{"s" if blk["topic_count"] != 1 else ""} lined up.</p>')
+            elif state == "finished":
+                B.append(f'<p class="wx-cond"><strong>Block finished</strong> {blk["ended"]:%d %b}. '
+                         f'Pick three new topics and set a new start date.</p>')
+
+            wk = st["weekly"]
+            if wk["changes"]:
+                rows = []
+                for i, change in enumerate(wk["changes"], 1):
+                    rows.append(
+                        f'<div class="story"><span class="tag tag-accent">{i}</span>'
+                        f'<span>{_esc(change)}'
+                        + (f'<span class="t">week of {wk["week_of"]:%d %b}</span>'
+                           if wk["stale"] and wk["week_of"] else "")
+                        + "</span></div>"
+                    )
+                B.append(f'<div class="stories">{"".join(rows)}</div>')
+            if wk["review_due"]:
+                if not wk["changes"]:
+                    prompt = "No three on file. Pick three changes for the week"
+                elif wk["stale"]:
+                    prompt = ("Last week's three are still showing — score them and pick "
+                              "three new ones")
+                else:
+                    prompt = f"{wk['review_day'].title()} review — score these and pick three new ones"
+                B.append(f'<p class="wx-cond"><strong>{_esc(prompt)}:</strong> '
+                         f'<code>dailybrief.py 3x3 week "..." "..." "..."</code></p>')
+            if tx.reason:
+                B.append(f'<p class="unavail">{_esc(tx.reason)}</p>')
+        elif tx.status == S.EMPTY:
+            B.append(f'<p class="unavail">{_esc(tx.reason)}</p>')
+        else:
+            B.append(_unavail(tx.reason))
 
     # --- Feed sections (Headlines, Audio & DSP, ...) -------------------------
     titles = dict(DEFAULT_SECTION_TITLES, **(cfg.get("section_titles") or {}))
@@ -1264,8 +1401,14 @@ def collect_sections(cfg: dict, today: dt.date) -> tuple[dict, list[str]]:
     if not reachable:
         # A captive portal returns HTTP 200 with a login page for every request,
         # so without this check the brief looks merely quiet rather than broken.
-        notices.append(f"OFFLINE — {why}. Nothing below was fetched today.")
-        return {k: S.Section(k, S.FAILED, reason=why) for k in (cfg.get("sections") or [])}, notices
+        notices.append(f"OFFLINE — {why}. Nothing fetched today; your 3x3 plan is local.")
+        offline = {k: S.Section(k, S.FAILED, reason=why)
+                   for k in (cfg.get("sections") or []) if k != "threexthree"}
+        # The plan is read off disk, so it is the one section an outage cannot
+        # take away -- and the one most worth seeing on a morning with no feeds.
+        if "threexthree" in (cfg.get("sections") or []):
+            offline["threexthree"] = S.threexthree(today, BASE / "plan.json")
+        return offline, notices
 
     # Only after we know the network is usable: a hand-edited city or postcode
     # must take effect on the next run rather than silently keep serving the
@@ -1274,7 +1417,10 @@ def collect_sections(cfg: dict, today: dt.date) -> tuple[dict, list[str]]:
     if loc_problem:
         notices.append(loc_problem)
 
-    secs = S.collect(cfg, today, int(cfg.get("deadline_seconds", 90)))
+    # base_dir explicitly: collect() otherwise resolves plan.json and the paper
+    # cache next to sources.py, which stops being the data directory the moment
+    # the code and the user's files are not in the same place.
+    secs = S.collect(cfg, today, int(cfg.get("deadline_seconds", 90)), base_dir=BASE)
 
     skew = netlib.clock_skew_minutes()
     if skew is not None and skew > 10:
@@ -2024,6 +2170,166 @@ def cmd_sources(args) -> int:
     return 0
 
 
+PLAN_PATH = BASE / "plan.json"
+
+
+def _plan_lines(st: dict, today: dt.date) -> list[str]:
+    """The plan as text, shared by `3x3 status` and every mutating command's echo."""
+    import plan as P
+
+    lines: list[str] = []
+    blk, state = st.get("block"), st.get("block_state")
+    if state == "active":
+        lines.append(f"Month {blk['number']} of {blk['topic_count']}: {blk['name']}")
+        lines.append(f"  {blk['month_start']:%d %b} - {blk['month_end']:%d %b}"
+                     f"  (week {blk['week']} of 4, {blk['days_left']} days left)")
+        for slot in P.SLOTS:
+            src = blk["sources"][slot]
+            due = "->" if slot == blk["due"] else "  "
+            label = P.SLOT_LABELS[slot]
+            lines.append(f"  {due} {slot:<6} {src['title'] if src else '(not chosen)'}"
+                         + (f"   [{label}]" if not src else ""))
+        mark = "produced" if blk["output_done"] else f"due by {blk['month_end']:%a %d %b}"
+        lines.append(f"  {'->' if blk['due'] == 'output' else '  '} output {mark}")
+    elif state == "not_started":
+        lines.append(f"Block starts {blk['starts']:%a %d %b} ({blk['topic_count']} topics).")
+    elif state == "finished":
+        lines.append(f"Block finished {blk['ended']:%a %d %b}. Set a new start and three topics.")
+    elif st.get("start"):
+        lines.append(f"Start date {st['start']:%d %b %Y} is set, but no topics are.")
+    else:
+        # Be precise about which half is missing; the problems list below says why
+        # a start date that *was* given did not parse.
+        lines.append("No month-block: " + ("the start date did not parse."
+                                           if st.get("problems") else
+                                           "no start date and no topics."))
+
+    wk = st["weekly"]
+    lines.append("")
+    if wk["changes"]:
+        # week_of is None when the plan was hand-edited without one; status()
+        # tolerates that, so the echo must too rather than crashing on %d %b.
+        if wk["week_of"]:
+            age = f"  (filed {wk['week_of']:%d %b}" + (", STALE)" if wk["stale"] else ")")
+        else:
+            age = "  (no filing date)"
+        lines.append(f"This week's three{age}")
+        for i, c in enumerate(wk["changes"], 1):
+            lines.append(f"  {i}. {c}")
+    else:
+        lines.append("No changes on file for this week.")
+    if wk["review_due"]:
+        lines.append(f"  Review due ({wk['review_day']}): "
+                     f'3x3 week "..." "..." "..."')
+    for problem in st.get("problems") or []:
+        lines.append(f"  ! {problem}")
+    return lines
+
+
+def cmd_threexthree(args) -> int:
+    """Read and edit the 3x3 plan: the weekly three and the monthly topics."""
+    import plan as P
+
+    today = dt.date.today()
+    action = args.action
+    items = list(args.items or [])
+
+    try:
+        plan = P.load(PLAN_PATH)
+    except P.PlanError as exc:
+        print(f"{exc}\nFix plan.json, or move it aside and run `3x3 init`.")
+        return 1
+
+    if action == "init":
+        if PLAN_PATH.exists():
+            print(f"{PLAN_PATH.name} already exists — nothing overwritten.")
+        else:
+            start = P.add_months(today.replace(day=1), 1)
+            P.save(PLAN_PATH, dict(P.DEFAULT_PLAN, start=start.isoformat(), topics=[],
+                                   weekly={"week_of": "", "changes": [], "history": []}))
+            print(f"Wrote {PLAN_PATH.name}, first block starting {start:%d %b %Y}.")
+        cfg = load_config()
+        sections = list(cfg.get("sections") or [])
+        if "threexthree" not in sections:
+            # After calendar, which is where it renders.
+            at = sections.index("calendar") + 1 if "calendar" in sections else len(sections)
+            sections.insert(at, "threexthree")
+            cfg["sections"] = sections
+            CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), "utf-8")
+            print("Enabled the 3x3 section in config.json.")
+        print('\nNext: 3x3 topic 1 "Your topic" --video "Title|url" --text "..." --misc "..."')
+        return 0
+
+    if action == "status":
+        if not PLAN_PATH.exists():
+            print("No plan.json yet. Run `dailybrief.py 3x3 init`.")
+            return 1
+        for line in _plan_lines(P.status(plan, today), today):
+            print(line)
+        return 0
+
+    # --- mutating actions ---------------------------------------------------
+    if action == "start":
+        if not items:
+            print("Give a date: 3x3 start 2026-09-01")
+            return 1
+        try:
+            dt.date.fromisoformat(items[0])
+        except ValueError:
+            print(f"Not a YYYY-MM-DD date: {items[0]!r}")
+            return 1
+        plan["start"] = items[0]
+
+    elif action == "topic":
+        if len(items) < 1 or not items[0].isdigit():
+            print('Give a topic number and name: 3x3 topic 1 "Psychoacoustics" --video "..."')
+            return 1
+        number, name = int(items[0]), (items[1] if len(items) > 1 else "")
+        sources = {"video": args.video, "text": args.text, "misc": args.misc}
+        try:
+            P.set_topic(plan, number, name, {k: v for k, v in sources.items() if v})
+        except P.PlanError as exc:
+            print(str(exc))
+            return 1
+
+    elif action == "week":
+        if len(items) != 3 or not all(i.strip() for i in items):
+            got = f"got {len(items)}" if len(items) != 3 else "one of them was blank"
+            print(f'Give exactly three non-empty changes; {got}.\n'
+                  f'  3x3 week "app limit 20 min" "Tue/Thu 8-9pm blocked" "call a friend"')
+            return 1
+        P.set_week(plan, today, items)
+
+    elif action == "score":
+        current = (plan.get("weekly") or {}).get("changes") or []
+        if not current:
+            print("No changes on file to score.")
+            return 1
+        if len(items) != len(current):
+            print(f"{len(current)} changes on file, {len(items)} verdicts given.\n"
+                  f"  3x3 score {' '.join(P.VERDICTS[:1] * len(current))}")
+            return 1
+        try:
+            P.score_week(plan, items)
+        except P.PlanError as exc:
+            print(str(exc))
+            return 1
+
+    elif action == "output":
+        try:
+            plan, name = P.mark_output(plan, today, " ".join(items))
+        except P.PlanError as exc:
+            print(str(exc))
+            return 1
+        print(f"Output marked produced for {name}.")
+
+    P.save(PLAN_PATH, plan)
+    print("")
+    for line in _plan_lines(P.status(plan, today), today):
+        print(line)
+    return 0
+
+
 def cmd_protocol(args) -> int:
     """Entry point for dailybrief:<verb> URLs (toast clicks, the Refresh button).
 
@@ -2212,6 +2518,16 @@ def main() -> int:
     p_src.add_argument("--force", action="store_true",
                        help="save even if the feed fails validation")
     p_src.set_defaults(func=cmd_sources)
+
+    p_3x3 = sub.add_parser("3x3", help="the 3x3 plan: this week's three changes and this month's topic")
+    p_3x3.add_argument("action", nargs="?", default="status",
+                       choices=["status", "init", "start", "topic", "week", "score", "output"])
+    p_3x3.add_argument("items", nargs="*", default=[],
+                       help='e.g. week "change one" "change two" "change three"')
+    p_3x3.add_argument("--video", default="", help='lecture video, as "Title|url"')
+    p_3x3.add_argument("--text", default="", help='article or book, as "Title|url"')
+    p_3x3.add_argument("--misc", default="", help='course, series or other, as "Title|url"')
+    p_3x3.set_defaults(func=cmd_threexthree)
 
     p_proto = sub.add_parser("protocol", help="handle a dailybrief: URL (used by toasts and the Refresh button)")
     p_proto.add_argument("url", nargs="?", default="dailybrief:open")

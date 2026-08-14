@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -19,8 +20,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
+// Article, CalendarMonth and GridView need no import: they are vendored in
+// Icons.kt, in this same package. Place and Refresh come from
+// material-icons-core, which material3 already puts on the classpath.
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -28,6 +32,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -41,10 +47,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -65,16 +75,26 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class Tab(val label: String, val icon: ImageVector) {
+    BRIEF("Brief", Icons.Default.Article),
+    PLAN("3×3", Icons.Default.GridView),
+    CALENDARS("Calendars", Icons.Default.CalendarMonth),
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RootScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    var tab by remember { mutableStateOf(Tab.BRIEF) }
     var status by remember { mutableStateOf(BriefStatus()) }
     var loading by remember { mutableStateOf(true) }
     var running by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    // "Busy" and "updated" are both messages, and neither is an error, so the
+    // message alone cannot decide its own colour.
+    var messageIsError by remember { mutableStateOf(false) }
     var editingCity by remember { mutableStateOf(false) }
     var cityInput by remember { mutableStateOf("") }
 
@@ -87,20 +107,39 @@ private fun RootScreen() {
         Brief.seedConfig(context)
         refreshStatus()
         loading = false
-        // A city is the one thing the app cannot guess, so ask rather than
-        // generate a brief with a hole where the weather should be.
         editingCity = status.city.isBlank()
         if (!editingCity) Scheduler.scheduleDaily(context)
+    }
+
+    // A composition survives onStop/onStart, so LaunchedEffect(Unit) above runs
+    // once and never again -- returning via Recents after the 08:00 worker ran
+    // would keep showing yesterday's brief. seedConfig, the loading gate and
+    // scheduleDaily deliberately stay in that effect so a resume never flashes
+    // the spinner or re-enqueues work.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            // Don't clobber an in-flight inline run: refreshStatus would briefly
+            // publish the PREVIOUS brief's generatedAt and flip the WebView back.
+            if (!running) refreshStatus()
+        }
     }
 
     fun generate() {
         if (running) return
         running = true
         message = null
+        messageIsError = false
+        tab = Tab.BRIEF
         scope.launch {
             val result = Brief.run(context)
             running = false
+            // Busy is checked first and on its own: it arrives as ok=false but
+            // nothing failed, so the brief already on screen stays exactly as it
+            // is and the user is told what is actually happening.
+            messageIsError = !result.ok && !result.busy
             message = when {
+                result.busy -> "A brief is already being generated."
                 result.ok && result.sections.isNotBlank() -> result.sections
                 result.ok -> "Brief updated"
                 else -> result.error?.lines()?.lastOrNull { it.isNotBlank() }
@@ -113,16 +152,40 @@ private fun RootScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (status.city.isNotBlank()) "Daily Brief · ${status.city}" else "Daily Brief") },
+                title = {
+                    Text(
+                        when (tab) {
+                            Tab.BRIEF ->
+                                if (status.city.isNotBlank()) "Daily Brief · ${status.city}"
+                                else "Daily Brief"
+                            Tab.PLAN -> "The 3×3 plan"
+                            Tab.CALENDARS -> "Calendars"
+                        },
+                    )
+                },
                 actions = {
-                    IconButton(onClick = { editingCity = true }) {
-                        Icon(Icons.Default.Place, contentDescription = "Change location")
+                    if (tab == Tab.BRIEF) {
+                        IconButton(onClick = { editingCity = true }) {
+                            Icon(Icons.Default.Place, contentDescription = "Change location")
+                        }
                     }
                     IconButton(onClick = { generate() }, enabled = !running) {
                         Icon(Icons.Default.Refresh, contentDescription = "Generate now")
                     }
                 },
             )
+        },
+        bottomBar = {
+            NavigationBar {
+                Tab.entries.forEach { entry ->
+                    NavigationBarItem(
+                        selected = tab == entry,
+                        onClick = { tab = entry },
+                        icon = { Icon(entry.icon, contentDescription = null) },
+                        label = { Text(entry.label) },
+                    )
+                }
+            }
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -143,6 +206,9 @@ private fun RootScreen() {
                     },
                 )
 
+                tab == Tab.PLAN -> PlanScreen()
+                tab == Tab.CALENDARS -> CalendarsScreen()
+
                 status.hasBrief -> Column(Modifier.fillMaxSize()) {
                     if (running) LinearProgressIndicator(Modifier.fillMaxWidth())
                     BriefView(
@@ -160,7 +226,12 @@ private fun RootScreen() {
                     }
                 }
 
-                else -> NoBriefYet(running = running, message = message, onGenerate = { generate() })
+                else -> NoBriefYet(
+                    running = running,
+                    message = message,
+                    messageIsError = messageIsError,
+                    onGenerate = { generate() },
+                )
             }
         }
     }
@@ -196,11 +267,16 @@ private fun CityPrompt(city: String, onCityChange: (String) -> Unit, onSave: () 
 }
 
 @Composable
-private fun NoBriefYet(running: Boolean, message: String?, onGenerate: () -> Unit) {
+private fun NoBriefYet(
+    running: Boolean,
+    message: String?,
+    messageIsError: Boolean,
+    onGenerate: () -> Unit,
+) {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        verticalArrangement = Arrangement.Center,
     ) {
         Text(
             text = if (running) "Gathering your brief…" else "No brief yet",
@@ -211,7 +287,11 @@ private fun NoBriefYet(running: Boolean, message: String?, onGenerate: () -> Uni
             Text(
                 text = it,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+                color = if (messageIsError) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 12.dp),
             )

@@ -26,6 +26,8 @@ import shutil
 import struct
 import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 import zlib
 from pathlib import Path
@@ -36,7 +38,6 @@ import platform_shim
 # a git checkout keeps them together, a PyInstaller build sits beside the .exe,
 # and a packaged Linux install writes to XDG. See platform_shim.app_home().
 BASE = platform_shim.app_home()
-RESOURCES = platform_shim.resource_dir()
 CONFIG_PATH = BASE / "config.json"
 BRIEFS_DIR = BASE / "briefs"
 LOGS_DIR = BASE / "logs"
@@ -44,7 +45,6 @@ LOG_PATH = LOGS_DIR / "dailybrief.log"
 STATE_PATH = BASE / "state.json"
 ICON_PATH = BASE / "icon.png"
 ICO_PATH = BASE / "icon.ico"
-TOAST_PS1 = RESOURCES / "toast.ps1"
 LATEST_HTML = BRIEFS_DIR / "latest.html"
 
 AUMID = "Local.DailyBrief"
@@ -508,7 +508,12 @@ PAGE = """<!doctype html>
 <title>{title}</title>
 <meta name="generated" content="{generated}">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Deliberately no webfont import. Fetching Inter meant a brief built entirely
+   from keyless local sources still called out to a Google server every time it
+   was opened -- on a phone chosen to avoid exactly that -- and did it on the
+   render path, so the text waited on the network to paint. The stack below
+   already named system-ui as the fallback; it is now simply the font, and a
+   locally installed Inter is still picked up at no network cost. */
 :root {{
   color-scheme: dark;
   /* Nocturne token roles, cherry ramp -- every value from the design file. */
@@ -573,7 +578,10 @@ a {{ color: var(--color-accent); text-underline-offset: 3px; }}
 .btn svg {{ width: 15px; height: 15px; flex: none; }}
 .btn.busy {{ opacity: 0.55; pointer-events: none; }}
 
-.brief {{ max-width: 660px; margin-left: min(6vw, calc(var(--space-8) * 3)); }}
+/* overflow-wrap must be `anywhere`, not `break-word`: only `anywhere` counts
+   towards a track's intrinsic min-content size, so `break-word` would leave the
+   grids below exactly as wide as the longest bare URL and fix nothing. */
+.brief {{ max-width: 660px; margin-left: min(6vw, calc(var(--space-8) * 3)); overflow-wrap: anywhere; }}
 .lede {{ font-size: 16px; line-height: 1.5; margin: 0 0 var(--space-2); max-width: 46ch; text-wrap: pretty; }}
 .placeline {{ margin: 0 0 var(--space-2); font-size: 17px; color: color-mix(in srgb, var(--color-text) 78%, transparent); }}
 
@@ -592,7 +600,10 @@ a {{ color: var(--color-accent); text-underline-offset: 3px; }}
 .wx-cond {{ font-size: 14px; color: color-mix(in srgb, var(--color-text) 72%, transparent); margin-top: var(--space-2); }}
 
 .tl {{ display: grid; gap: var(--space-1); }}
-.tl-row {{ display: grid; grid-template-columns: 64px 5px 1fr; align-items: stretch; gap: var(--space-3); padding: var(--space-2) 0; }}
+/* minmax(0, 1fr), not 1fr: a 1fr track keeps an automatic minimum of
+   min-content, so one unbreakable token (a bare meeting URL) widens the row
+   past the viewport and scrolls the whole page sideways. */
+.tl-row {{ display: grid; grid-template-columns: 64px 5px minmax(0, 1fr); align-items: stretch; gap: var(--space-3); padding: var(--space-2) 0; }}
 .tl-times {{ display: grid; gap: 2px; font-size: 13px; font-variant-numeric: tabular-nums; padding-top: 1px; align-content: start; }}
 .tl-times .s {{ color: color-mix(in srgb, var(--color-text) 85%, transparent); }}
 .tl-times .e {{ color: color-mix(in srgb, var(--color-text) 66%, transparent); }}
@@ -604,7 +615,9 @@ a {{ color: var(--color-accent); text-underline-offset: 3px; }}
 
 .stories {{ display: grid; gap: var(--space-1); }}
 .story {{
-  display: grid; grid-template-columns: auto 1fr; gap: var(--space-3); align-items: baseline;
+  /* minmax(0, 1fr) for the same reason as .tl-row: .stories is itself a
+     single-column grid, so one long headline URL stretched every sibling row. */
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); align-items: baseline;
   padding: var(--space-2) var(--space-2) var(--space-2) 0; border-radius: var(--radius-sm);
 }}
 .story:hover {{ background: color-mix(in srgb, var(--color-text) 4%, transparent); }}
@@ -612,6 +625,11 @@ a {{ color: var(--color-accent); text-underline-offset: 3px; }}
 .story a {{ color: var(--color-text); text-decoration: none; font-size: 15px; line-height: 1.4; }}
 .story a:hover {{ color: var(--color-accent-300); text-decoration: underline; }}
 .story .t {{ font-size: 11px; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--color-text) 38%, transparent); margin-left: var(--space-2); white-space: nowrap; }}
+/* .t holds a clock time in the feed sections and a hostname in Tech. A time
+   must never wrap; a 47-char host must never be an atomic 263px block.
+   Not a media query: the mismatch is semantic, not viewport-dependent --
+   a hostname needs no nowrap at any width. */
+.story .t.host {{ white-space: normal; overflow-wrap: anywhere; }}
 
 .tag {{ display: inline-flex; align-items: center; font-size: 11px; letter-spacing: 0.02em; padding: 3px 10px; border-radius: calc(var(--radius-md) * 0.75); }}
 .tag-accent {{ background: var(--color-accent-800); color: var(--color-accent-100); }}
@@ -657,6 +675,19 @@ a.feature-title:hover {{ color: var(--color-accent-300); text-decoration: underl
 .prose table {{ border-collapse: collapse; width: 100%; font-size: 14px; }}
 .prose th, .prose td {{ padding: 8px 11px; border-bottom: 1px solid var(--line); }}
 .prose .error {{ background: var(--accent-soft); border: 1px solid var(--color-accent-700); border-radius: var(--radius-md); padding: 16px 18px; }}
+
+/* The editorial left indent on .brief is desktop styling. .topbar has no left
+   offset, so on a phone the indent only pushes the heading out of line with the
+   "Daily brief" brand (21.6px adrift at 360px) and eats 6% of an already narrow
+   column. Removing it below the breakpoint puts both back on one left edge.
+
+   700px is the breakpoint because .brief's 660px measure stops fitting at about
+   738px of viewport (660 + 33.6px body padding + 6vw indent), so every width
+   that still achieves the design's full column keeps the indent exactly as it
+   is -- nothing about the desktop layout changes. */
+@media (max-width: 700px) {{
+  .brief {{ margin-left: 0; }}
+}}
 </style>
 <div class="topbar">
   <span class="brand">Daily brief</span>
@@ -859,7 +890,7 @@ def compose_markdown(cfg: dict, today: dt.date, secs: dict, notices: list[str]) 
     bh = secs.get("bankholiday")
     if bh and bh.usable:
         d = bh.data
-        when = "today" if d["days"] == 0 else ("tomorrow" if d["days"] == 1 else f"in {d['days']} days")
+        when = _when_phrase(d["days"])
         out.append(f"**{d['title']}** bank holiday {when} ({d['date']:%a %d %b}).")
     elif bh and bh.status == S.FAILED:
         out.append(f"*Bank holidays unavailable — {bh.reason}*")
@@ -875,8 +906,7 @@ def compose_markdown(cfg: dict, today: dt.date, secs: dict, notices: list[str]) 
             st = tx.data
             blk, state = st.get("block"), st.get("block_state")
             if state == "active":
-                left = blk["days_left"]
-                left_txt = "last day" if left == 0 else f"{left} day{'s' if left != 1 else ''} left"
+                left_txt = _days_left_text(blk["days_left"])
                 out.append(f"**{blk['name']}** — month {blk['number']} of {blk['topic_count']}, "
                            f"week {blk['week']}, {left_txt}.")
                 if blk["due"] == "output":
@@ -1044,7 +1074,7 @@ def resolve_location(cfg: dict, *, save: bool = True) -> tuple[dict, str | None]
     if save:
         cfg["location"] = loc
         try:
-            CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), "utf-8")
+            _save_cfg(cfg)
         except OSError as exc:
             log(f"WARN: could not cache resolved location ({exc})")
     return loc, None
@@ -1082,6 +1112,18 @@ def _session_when(start: dt.datetime, end: dt.datetime, today: dt.date) -> str:
     delta = (day - today).days
     label = "today" if delta == 0 else ("tomorrow" if delta == 1 else f"{start:%a %d %b}")
     return f"{label} {start:%H:%M}–{end:%H:%M}"
+
+
+# Wording shared by compose_markdown and compose_page. Both renderers said these
+# two things in identical words already; keeping one copy means they cannot drift
+# apart later. Only the wording is shared -- the footer stays per-renderer on
+# purpose, because merging it would change one renderer's failure text.
+def _when_phrase(days: int) -> str:
+    return "today" if days == 0 else ("tomorrow" if days == 1 else f"in {days} days")
+
+
+def _days_left_text(left: int) -> str:
+    return "last day" if left == 0 else f"{left} day{'s' if left != 1 else ''} left"
 
 
 def _sect(title: str) -> str:
@@ -1146,7 +1188,7 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
     bh = secs.get("bankholiday")
     if bh is not None and bh.usable:
         d = bh.data
-        when = "today" if d["days"] == 0 else ("tomorrow" if d["days"] == 1 else f"in {d['days']} days")
+        when = _when_phrase(d["days"])
         B.append(f'<p class="wx-cond"><strong>{_esc(d["title"])}</strong> bank holiday '
                  f'{_esc(when)} ({d["date"]:%a %d %b}).</p>')
 
@@ -1203,8 +1245,7 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
             blk, state = st.get("block"), st.get("block_state")
             if state == "active":
                 due = blk["due"]
-                left = blk["days_left"]
-                left_txt = "last day" if left == 0 else f"{left} day{'s' if left != 1 else ''} left"
+                left_txt = _days_left_text(blk["days_left"])
                 B.append(
                     '<div class="feature"><div class="feature-meta">'
                     f'<span class="tag tag-outline">Month {blk["number"]} of {blk["topic_count"]}'
@@ -1329,7 +1370,10 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
     # --- Tech (HN) -----------------------------------------------------------
     techs = secs.get("tech")
     if techs is not None:
-        B.append(_sect(dict(DEFAULT_SECTION_TITLES).get("tech", "Tech")))
+        # Literal, not titles.get("tech"): compose_markdown hardcodes `## Tech`,
+        # so honouring a section_titles override here alone would make the two
+        # renderers disagree. Change both or neither.
+        B.append(_sect("Tech"))
         if techs.usable:
             rows = []
             for it in techs.data[: int(cfg.get("tech_items", 2))]:
@@ -1338,7 +1382,7 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
                 rows.append(
                     f'<div class="story"><span class="tag tag-accent">{points}</span>'
                     f'<span><a href="{_esc(it.link)}" rel="noopener noreferrer">{_esc(it.title)}</a>'
-                    f'<span class="t">{_esc(host)}</span></span></div>'
+                    f'<span class="t host">{_esc(host)}</span></span></div>'
                 )
             B.append(f'<div class="stories">{"".join(rows)}</div>')
         elif techs.status == S.EMPTY:
@@ -1466,13 +1510,23 @@ def attach_session(secs: dict, today: dt.date, now: dt.datetime | None = None) -
     if cal is None:
         st["session"] = {"checked": False, "why": "the calendar section is switched off"}
         return
-    if cal.status == S.FAILED or not detail.get("scanned"):
+    if cal.status == S.FAILED:
         st["session"] = {"checked": False,
                          "why": f"the calendar could not be read ({cal.reason[:60]})"
                                 if cal.reason else "the calendar could not be read"}
         return
-    if not detail.get("horizon_days"):
+    if not detail.get("checked"):
+        # Nothing configured is EMPTY, not FAILED, and the two must not read
+        # alike. detail['checked'] is the count of configured sources -- more
+        # robust than grepping cal.reason, and it does not couple two modules
+        # by a string. sources.calendar() returns that case with no detail at
+        # all, so `scanned` is None there and the FAILED wording used to win.
         st["session"] = {"checked": False, "why": "no calendar is connected — see calendars.txt"}
+        return
+    if not detail.get("scanned") or not detail.get("horizon_days"):
+        st["session"] = {"checked": False,
+                         "why": f"the calendar could not be read ({cal.reason[:60]})"
+                                if cal.reason else "the calendar could not be read"}
         return
 
     now = now or dt.datetime.now().astimezone()
@@ -1583,11 +1637,17 @@ def build_prompt(cfg: dict, secs: dict, notices: list[str], today: dt.date) -> s
     style = ""
     prompt_file = BASE / cfg.get("prompt_file", "prompt.md")
     if prompt_file.exists():
-        style = prompt_file.read_text("utf-8").strip()
+        # utf-8-sig, like read_json: prompt.md exists to be hand-edited, and
+        # Notepad writes a BOM that plain "utf-8" decodes as a literal U+FEFF
+        # glued to the user's first word (strip() does not remove it).
+        style = prompt_file.read_text("utf-8-sig").strip()
 
     now = dt.datetime.now().astimezone()
     parts = [
-        f"Today is {now.strftime('%A, %d %B %Y')}, local time {now.strftime('%H:%M')}.",
+        # The date comes from `today` -- the one clock read the whole run shares --
+        # so a run that crosses midnight does not tell Claude a different date
+        # than the one the data was collected for. The clock time is still "now".
+        f"Today is {today.strftime('%A, %d %B %Y')}, local time {now.strftime('%H:%M')}.",
         "",
         "Below is TODAY'S DATA, already fetched from live sources. Write my daily brief",
         "using ONLY this data. Do not search, do not add facts, do not invent headlines.",
@@ -1611,8 +1671,15 @@ def build_prompt(cfg: dict, secs: dict, notices: list[str], today: dt.date) -> s
     return "\n".join(parts)
 
 
-def run_claude(cfg: dict, secs: dict, notices: list[str], today: dt.date) -> tuple[str, dict]:
-    claude = resolve_claude(cfg)
+def run_claude(cfg: dict, secs: dict, notices: list[str], today: dt.date,
+               claude: str | None = None, auth_checked: bool = False) -> tuple[str, dict]:
+    # engine=auto has already run resolve_claude() and check_auth() to decide it
+    # was going to come here at all; repeating them spawns a second
+    # `claude auth status` child, each with its own 60s timeout, inside a run
+    # that already has a deadline. Both are re-done when the caller passes
+    # nothing, so the engine=claude path keeps its own checks -- and no result is
+    # cached across calls, because on Android this interpreter outlives a sign-in.
+    claude = claude or resolve_claude(cfg)
     if not claude:
         raise BriefError(
             "Could not find the `claude` executable. Set \"claude_path\" in config.json.",
@@ -1620,7 +1687,7 @@ def run_claude(cfg: dict, secs: dict, notices: list[str], today: dt.date) -> tup
             "Set an explicit path in `config.json`:\n\n"
             "```\n\"claude_path\": \"C:\\\\Users\\\\Danny\\\\.local\\\\bin\\\\claude.exe\"\n```",
         )
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not auth_checked and not os.environ.get("ANTHROPIC_API_KEY"):
         signed_in, _method = check_auth(claude)
         if not signed_in:
             raise auth_error()
@@ -1692,15 +1759,21 @@ def run_claude(cfg: dict, secs: dict, notices: list[str], today: dt.date) -> tup
     return text, stats
 
 
-def credential_available(cfg: dict) -> tuple[bool, str]:
+def credential_available(cfg: dict) -> tuple[bool, str, str | None]:
+    """(have a credential, how, the resolved claude path if one was resolved).
+
+    The third element exists so engine=auto can hand what it already found to
+    run_claude instead of making it spawn `claude auth status` a second time.
+    None on the API-key path simply means resolve_claude was never called.
+    """
     if os.environ.get("ANTHROPIC_API_KEY"):
-        return True, "ANTHROPIC_API_KEY"
+        return True, "ANTHROPIC_API_KEY", None
     claude = resolve_claude(cfg)
     if claude:
         ok, method = check_auth(claude)
         if ok:
-            return True, f"claude CLI ({method})"
-    return False, "none"
+            return True, f"claude CLI ({method})", claude
+    return False, "none", claude if claude else None
 
 
 def generate(cfg: dict, today: dt.date) -> tuple[str, dict, dict]:
@@ -1709,24 +1782,37 @@ def generate(cfg: dict, today: dt.date) -> tuple[str, dict, dict]:
     The data collection is identical either way, so a missing credential costs
     you the prose styling and nothing else -- never the brief itself.
     """
+    t0 = time.monotonic()
     secs, notices = collect_sections(cfg, today)
 
     engine = str(cfg.get("engine", "local")).lower()
+    claude_path: str | None = None
+    auth_checked = False
     if engine == "auto":
-        have, how = credential_available(cfg)
+        have, how, claude_path = credential_available(cfg)
+        # auto has just proved the credential works; saying so lets run_claude
+        # skip the identical check. engine=claude passes neither and still does
+        # its own, so auth_error() and its fix-it markdown are unaffected.
+        auth_checked = have
         engine = "claude" if have else "local"
         log(f"engine=auto resolved to {engine} (credential: {how})")
 
     if engine == "claude":
         try:
-            markdown, stats = run_claude(cfg, secs, notices, today)
+            markdown, stats = run_claude(cfg, secs, notices, today,
+                                         claude=claude_path, auth_checked=auth_checked)
             stats["engine"] = "claude"
             return markdown, stats, secs, notices
         except Exception as exc:  # noqa: BLE001 - never let the AI layer break the brief
             log(f"WARN: Claude synthesis failed ({exc}); rendering locally instead")
             notices.append(f"Claude synthesis failed ({str(exc).splitlines()[0][:120]}) — rendered locally.")
 
-    return compose_markdown(cfg, today, secs, notices), {"engine": "local"}, secs, notices
+    # elapsed_s is what the footer's "built in Xs" reads. Wall clock, not the sum
+    # of Section.elapsed_ms: the collectors overlap, so summing them would
+    # overstate the time the user actually waited.
+    return (compose_markdown(cfg, today, secs, notices),
+            {"engine": "local", "elapsed_s": round(time.monotonic() - t0, 1)},
+            secs, notices)
 
 
 # ---------------------------------------------------------------- toast / window
@@ -1908,16 +1994,29 @@ def publish_latest(src: Path) -> None:
     The Refresh flow has a browser reloading this exact file on a timer, so a
     plain copyfile can be read mid-write and render as a truncated page.
     os.replace is atomic on the same volume: readers see old or new, never half.
+
+    The tmp name carries pid+thread id because on Android the Refresh button and
+    BriefWorker can both be inside cmd_run in one interpreter; a shared tmp name
+    makes two atomic writes into one spliced file.
     """
-    tmp = LATEST_HTML.with_name("latest.html.tmp")
-    shutil.copyfile(src, tmp)
-    os.replace(tmp, LATEST_HTML)
+    tmp = LATEST_HTML.with_name(f"latest.html.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, LATEST_HTML)
+    except BaseException:
+        # Per-thread names never collide, so without this cleanup a failed
+        # replace leaves them accumulating in briefs/ forever.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
-def prune_old(keep_days: int) -> None:
+def prune_old(keep_days: int, today: dt.date | None = None) -> None:
     if keep_days <= 0:
         return
-    cutoff = dt.date.today() - dt.timedelta(days=keep_days)
+    cutoff = (today or dt.date.today()) - dt.timedelta(days=keep_days)
     for f in BRIEFS_DIR.glob("????-??-??.*"):
         try:
             if dt.date.fromisoformat(f.stem) < cutoff:
@@ -1929,7 +2028,11 @@ def prune_old(keep_days: int) -> None:
 def cmd_run(args) -> int:
     cfg = load_config()
     BRIEFS_DIR.mkdir(parents=True, exist_ok=True)
-    today = dt.date.today().isoformat()
+    # One clock read for the whole command. A claude run can span 15 minutes
+    # (timeout_seconds), and a run that crosses midnight must not file the 15th's
+    # data under the 14th's name, nor head it with the 14th's date.
+    day = dt.date.today()
+    today = day.isoformat()
     html_path = BRIEFS_DIR / f"{today}.html"
 
     if html_path.exists() and not args.force:
@@ -1940,7 +2043,7 @@ def cmd_run(args) -> int:
 
     log(f"--- generating brief for {today} (engine={cfg.get('engine')}) ---")
     try:
-        markdown, stats, secs, notices = generate(cfg, dt.date.today())
+        markdown, stats, secs, notices = generate(cfg, day)
         log(
             "sections: "
             + ", ".join(f"{k}={s.status}" for k, s in sorted(secs.items()))
@@ -1951,7 +2054,7 @@ def cmd_run(args) -> int:
         detail = markdown_to_html(explain) if explain else markdown_to_html(f"```\n{exc}\n```")
         html_path.write_text(
             render_page(
-                heading=dt.date.today().strftime("%A %d %B"),
+                heading=day.strftime("%A %d %B"),
                 lede="The brief could not be generated.",
                 body_html=f'<div class="error"><h3>What went wrong</h3>{detail}</div>'
                 f"<p>Full log: <code>logs\\dailybrief.log</code></p>",
@@ -1974,14 +2077,14 @@ def cmd_run(args) -> int:
     engine = stats.get("engine", "local")
     if engine == "local":
         # The structured renderer: the design's layout built from section data.
-        page = compose_page(cfg, dt.date.today(), secs, notices, stats, tldr)
+        page = compose_page(cfg, day, secs, notices, stats, tldr)
     else:
         # Claude wrote prose; keep it, in the same chrome.
         meta_bits = [dt.datetime.now().strftime("%H:%M"), f"{engine}/{cfg.get('model')}"]
         if stats.get("total_cost_usd") is not None:
             meta_bits.append(f"${float(stats['total_cost_usd']):.3f}")
         page = render_page(
-            heading=dt.date.today().strftime("%A %d %B"),
+            heading=day.strftime("%A %d %B"),
             lede=tldr,
             body_html=markdown_to_html(body_md),
             meta_bits=meta_bits,
@@ -1989,7 +2092,7 @@ def cmd_run(args) -> int:
         )
     html_path.write_text(page, "utf-8")
     publish_latest(html_path)
-    prune_old(int(cfg.get("keep_days", 60)))
+    prune_old(int(cfg.get("keep_days", 60)), day)
     save_state(last_run=dt.datetime.now().isoformat(timespec="seconds"), last_status="ok",
                last_brief=str(html_path), last_cost=stats.get("total_cost_usd"),
                last_engine=stats.get("engine", "local"),
@@ -2105,7 +2208,7 @@ def cmd_setup(args) -> int:
         if value:
             cfg.setdefault("units", dict(DEFAULT_CONFIG["units"]))[key] = value
 
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), "utf-8")
+    _save_cfg(cfg)
     units = cfg.get("units") or DEFAULT_CONFIG["units"]
     print(f"Location  : {chosen['label']} ({chosen['latitude']}, {chosen['longitude']})")
     print(f"Holidays  : {cfg.get('bank_holiday_division', 'off')}")
@@ -2370,7 +2473,7 @@ def cmd_threexthree(args) -> int:
             at = sections.index("calendar") + 1 if "calendar" in sections else len(sections)
             sections.insert(at, "threexthree")
             cfg["sections"] = sections
-            CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), "utf-8")
+            _save_cfg(cfg)
             print("Enabled the 3x3 section in config.json.")
         print('\nNext: 3x3 topic 1 "Your topic" --video "Title|url" --text "..." --misc "..."')
         return 0
@@ -2553,7 +2656,8 @@ def cmd_status(_args) -> int:
         except (OSError, ValueError):
             pass
     engine = str(cfg.get("engine", "local")).lower()
-    have, how = credential_available(cfg) if engine != "local" else (False, "not needed")
+    have, how, _claude = (credential_available(cfg) if engine != "local"
+                          else (False, "not needed", None))
     effective = engine if engine != "auto" else ("claude" if have else "local")
     loc = cfg.get("location") or {}
 

@@ -55,12 +55,43 @@ android {
         applicationId = "dev.danny.dailybrief"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.1.0"
+        // versionCode must increase or Android refuses to install the new APK
+        // over the old one -- it is the only field the installer compares.
+        versionCode = 2
+        versionName = "1.2.0"
 
-        // Chaquopy ships a CPython runtime per ABI. Two covers a real phone and
-        // the emulator; all four would roughly double the APK for nothing.
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        // ABIs are declared per flavour below, not here.
+    }
+
+    // One APK per ABI, via flavours rather than `splits`.
+    //
+    // `splits { abi { ... } }` is the usual way to do this and it CANNOT be used
+    // with Chaquopy. The two constraints are mutually exclusive:
+    //   AGP:      "ndk abiFilters cannot be present when splits abi filters are set"
+    //   Chaquopy: "requires ndk.abiFilters: you may want to add it to defaultConfig"
+    // A flavour gets its own abiFilters, which satisfies both.
+    //
+    // Why bother: Chaquopy ships a whole ~15 MB CPython runtime per ABI. One APK
+    // carrying both meant 32.8% of it could not be dlopen'd on the device it was
+    // installed on.
+    //
+    // The cost, stated plainly: the two APKs sum to more total build storage than
+    // the single fat one did, because the ~12 MB they share is now duplicated.
+    // That is the right trade when the user downloads one of them -- but it is
+    // not free, and the build script must name the ABI in each filename or a
+    // sideloader cannot tell which file is theirs.
+    flavorDimensions += "abi"
+    productFlavors {
+        // arm64-v8a: every phone this is built for, including the GrapheneOS one.
+        create("arm64") {
+            dimension = "abi"
+            ndk { abiFilters += "arm64-v8a" }
+        }
+        // x86_64: the emulator only. Kept because it is what the app is tested on.
+        create("x86_64") {
+            dimension = "abi"
+            ndk { abiFilters += "x86_64" }
+        }
     }
 
     signingConfigs {
@@ -123,7 +154,14 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    // material-icons-core only. The app draws six icons; material-icons-extended
+    // dexed to 21.8 MiB (11,105 classes) to supply three of them, which is 4.0
+    // MiB of the deflated APK and what pushed the build into a second dex file.
+    // Place, Refresh and Delete come from core; Article, CalendarMonth and
+    // GridView are vendored in Icons.kt with the library's own path data.
+    // core is already on the classpath via material3 -- named here so that stays
+    // true if material3 ever stops pulling it in.
+    implementation("androidx.compose.material:material-icons-core")
 
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

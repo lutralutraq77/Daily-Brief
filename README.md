@@ -441,11 +441,15 @@ on 3.11 and earlier.
 powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
 ```
 
-Produces `dist\windows\` with `DailyBrief.exe` (console, for the CLI) and
-`DailyBriefw.exe` (windowless, for the scheduled run — a console app on a daily
-timer flashes a black window in your face). Config, `briefs\` and `logs\` live
-beside the exe, so the folder is the whole install; set `DAILYBRIEF_HOME` to put
-them elsewhere.
+Produces `dist\windows\DailyBrief\` with `DailyBrief.exe` (console, for the CLI)
+and `DailyBriefw.exe` (windowless, for the scheduled run — a console app on a
+daily timer flashes a black window in your face). Config, `briefs\` and `logs\`
+live beside the exes, so the folder is the whole install; set `DAILYBRIEF_HOME`
+to put them elsewhere.
+
+Both exes share one `_internal\` payload rather than embedding a copy each,
+which is most of the download. **The folder travels as a unit** — copying
+`DailyBrief.exe` out on its own gives a broken install.
 
 ### Arch Linux
 
@@ -475,6 +479,32 @@ same collectors byte for byte — the Kotlin shell only owns the UI, the daily
 `WorkManager` job and the notification. The build copies every top-level `*.py`
 from the repo root at build time, so the app cannot drift from the desktop
 builds.
+
+**One APK per ABI.** Chaquopy ships a whole CPython runtime per architecture, so
+a combined APK was 45 MB of which a third could never run on the device it was
+installed on. Install `app-arm64-release.apk` on a phone; `app-x86_64-release.apk`
+is for the emulator.
+
+This is done with product flavours, not the usual `splits { abi { … } }`, because
+the two options are mutually exclusive here: AGP rejects `ndk.abiFilters`
+alongside `splits.abi`, and Chaquopy requires `ndk.abiFilters`. A flavour has its
+own `abiFilters`, which satisfies both.
+
+Three tabs:
+
+- **Brief** — the generated page, and the city.
+- **3×3** — the whole plan, editable on the phone: topics and their three
+  sources, this week's three changes and their kept/retry/dropped verdicts, the
+  month's output, the start date, review day and session length. Every rule
+  about month blocks, stale weeks and which source a week is due stays in
+  `plan.py`; the screen only moves values across.
+- **Calendars** — connect an iCal/ICS feed, test it, remove it. This is what
+  fills in *Today's calendar* and lets the 3×3 session land in real free time.
+
+A secret iCal address is a permanent bearer token for the whole calendar, so the
+UI never shows one back. A connected calendar is listed as its host and last few
+characters (`calendar.google.com · ends c3f1`) — enough to tell two apart, not
+enough to read either. `webcal://` addresses are rewritten to `https://`.
 
 There is no offline story and no push: it fetches when it runs, exactly like the
 desktop builds.

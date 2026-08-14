@@ -624,17 +624,16 @@ def on_this_day(today: dt.date) -> Section:
     return Section("onthisday", FAILED, reason=last, elapsed_ms=_since(started))
 
 
-def read_calendar_sources(path) -> list[dict]:
-    """Parse calendars.txt: one calendar per line, optional `Label = ` prefix.
+def iter_calendar_sources(path):
+    """(raw line index, entry) for every usable line in calendars.txt.
 
-    Kept OUT of config.json deliberately. A Google secret ICS URL is a bearer
-    token granting read of the whole calendar forever, and config.json is the
-    file the README tells you to open, edit and paste into a support thread.
+    The line index exists so a caller that EDITS the file can address the exact
+    line this entry came from. Matching the parsed target back against the raw
+    text is not the same thing: one URL is routinely a prefix of another.
     """
-    out = []
     if not path.exists():
-        return out
-    for raw in path.read_text("utf-8-sig").splitlines():
+        return
+    for lineno, raw in enumerate(path.read_text("utf-8-sig").splitlines()):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -644,8 +643,17 @@ def read_calendar_sources(path) -> list[dict]:
         if not line:
             continue
         netlib.register_secret(line)
-        out.append({"label": label, "target": line})
-    return out
+        yield lineno, {"label": label, "target": line}
+
+
+def read_calendar_sources(path) -> list[dict]:
+    """Parse calendars.txt: one calendar per line, optional `Label = ` prefix.
+
+    Kept OUT of config.json deliberately. A Google secret ICS URL is a bearer
+    token granting read of the whole calendar forever, and config.json is the
+    file the README tells you to open, edit and paste into a support thread.
+    """
+    return [entry for _, entry in iter_calendar_sources(path)]
 
 
 def _load_calendar_body(target: str, cache_dir) -> tuple[str, str]:

@@ -19,6 +19,7 @@ plan.json is gitignored like config.json; plan.example.json is the shipped copy.
 from __future__ import annotations
 
 import calendar as calmod
+import copy
 import datetime as dt
 import json
 import urllib.parse
@@ -74,6 +75,23 @@ class PlanError(ValueError):
 # ----------------------------------------------------------------- file I/O
 
 
+def blank_plan() -> dict:
+    """A fresh empty plan, sharing nothing with DEFAULT_PLAN.
+
+    dict(DEFAULT_PLAN, weekly=dict(...)) is one level too shallow: the lists
+    inside `weekly` stay shared, and set_week appends to `history` in place, so
+    one plan's archived week leaks into the next plan built from the default.
+    """
+    return copy.deepcopy(DEFAULT_PLAN)
+
+
+def new_plan(start: dt.date) -> dict:
+    """A fresh plan starting on `start`. Shares nothing with DEFAULT_PLAN."""
+    plan = blank_plan()
+    plan["start"] = start.isoformat()
+    return plan
+
+
 def load(path) -> dict:
     """Read plan.json, or return the empty default when there is none.
 
@@ -83,7 +101,7 @@ def load(path) -> dict:
     """
     path = Path(path)
     if not path.exists():
-        return dict(DEFAULT_PLAN, weekly=dict(DEFAULT_PLAN["weekly"]), topics=[])
+        return blank_plan()
     try:
         raw = json.loads(path.read_text("utf-8-sig"))
     except (OSError, ValueError) as exc:
@@ -91,9 +109,9 @@ def load(path) -> dict:
     if not isinstance(raw, dict):
         raise PlanError(f"{path.name} must contain a JSON object")
 
-    plan = dict(DEFAULT_PLAN, weekly=dict(DEFAULT_PLAN["weekly"]), topics=[])
+    plan = blank_plan()
     plan.update(raw)
-    weekly = dict(DEFAULT_PLAN["weekly"])
+    weekly = blank_plan()["weekly"]
     if isinstance(raw.get("weekly"), dict):
         weekly.update(raw["weekly"])
     plan["weekly"] = weekly
@@ -322,10 +340,17 @@ def propose_session(days: dict[dt.date, list[dict]], plan: dict, now: dt.datetim
 # ------------------------------------------------------------------- reading
 
 
+def _topic_raw_name(topic: Any) -> str:
+    """The name as written, normalised. Never the '(topic N unnamed)' stand-in.
+
+    `or ""` on both branches: str(None) is "None", which is four non-blank
+    characters and silently passes an is-it-blank test.
+    """
+    return str(((topic or {}).get("name") or "") if isinstance(topic, dict) else (topic or ""))
+
+
 def _topic_name(topic: Any, i: int) -> str:
-    if isinstance(topic, dict):
-        return _clean(topic.get("name") or "") or f"(topic {i + 1} unnamed)"
-    return _clean(topic) or f"(topic {i + 1} unnamed)"
+    return _clean(_topic_raw_name(topic)) or f"(topic {i + 1} unnamed)"
 
 
 def _topic_sources(topic: Any) -> dict[str, dict | None]:
@@ -390,7 +415,7 @@ def status(plan: dict, today: dt.date) -> dict:
                 if bad:
                     problems.append(f"{slot} link is not a linkable address, shown "
                                     f"unlinked: {bad[:60]}")
-            if not str((topic or {}).get("name") if isinstance(topic, dict) else topic or "").strip():
+            if not _topic_raw_name(topic).strip():
                 problems.append(f"topic {idx + 1} has no name - this month has no subject")
             # `output` may be anything a hand edit left behind, so test its shape
             # rather than calling .get() on whatever happens to be there.
@@ -475,7 +500,7 @@ def set_week(plan: dict, today: dt.date, changes: list[str]) -> dict:
     The outgoing set keeps whatever verdicts it was given; unscored ones are
     archived as such rather than assumed kept.
     """
-    weekly = plan.setdefault("weekly", dict(DEFAULT_PLAN["weekly"]))
+    weekly = plan.setdefault("weekly", blank_plan()["weekly"])
     previous = [str(c).strip() for c in (weekly.get("changes") or []) if str(c).strip()]
     if previous:
         history = weekly.setdefault("history", [])
@@ -493,7 +518,7 @@ def set_week(plan: dict, today: dt.date, changes: list[str]) -> dict:
 
 def score_week(plan: dict, verdicts: list[str]) -> dict:
     """Attach kept/dropped/retry verdicts to the changes currently on file."""
-    weekly = plan.setdefault("weekly", dict(DEFAULT_PLAN["weekly"]))
+    weekly = plan.setdefault("weekly", blank_plan()["weekly"])
     bad = [v for v in verdicts if v.lower() not in VERDICTS]
     if bad:
         raise PlanError(f"verdict must be one of {', '.join(VERDICTS)}; got {bad[0]!r}")

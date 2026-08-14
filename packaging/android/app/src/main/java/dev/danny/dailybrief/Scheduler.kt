@@ -36,7 +36,11 @@ object Scheduler {
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
             .build()
         WorkManager.getInstance(context.applicationContext)
-            .enqueueUniquePeriodicWork(DAILY, ExistingPeriodicWorkPolicy.UPDATE, request)
+            // KEEP, not UPDATE: this runs on every launch, and UPDATE re-applies
+            // initialDelay against the ORIGINAL lastEnqueueTime, so opening the
+            // app before the first run drags the daily slot to that moment.
+            // KEEP still creates the work on first launch and after a cancel.
+            .enqueueUniquePeriodicWork(DAILY, ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
     fun runNow(context: Context) {

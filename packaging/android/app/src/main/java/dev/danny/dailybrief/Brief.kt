@@ -16,8 +16,14 @@ data class BriefStatus(
     val generatedAt: Long = 0L,
 )
 
+/**
+ * [busy] is a third state, not a failure: another run already holds the Python
+ * side's lock, so nothing was generated and nothing went wrong. It arrives with
+ * ok=false, so every consumer must test it before deciding "could not generate".
+ */
 data class RunResult(
     val ok: Boolean,
+    val busy: Boolean = false,
     val sections: String = "",
     val latest: String = "",
     val error: String? = null,
@@ -69,6 +75,7 @@ object Brief {
         val o = json(entry().callAttr("run_brief", home(context), true))
         RunResult(
             ok = o.optBoolean("ok"),
+            busy = o.optBoolean("busy"),
             sections = o.optString("sections"),
             latest = o.optString("latest"),
             error = if (o.has("error")) o.optString("error") else null,

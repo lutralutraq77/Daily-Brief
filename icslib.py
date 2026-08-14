@@ -65,7 +65,16 @@ def unfold(text: str) -> list[str]:
 
 
 def split_line(line: str) -> tuple[str, dict, str]:
-    i = line.find(":")
+    # Find the head/value colon with the same quote-awareness the parameter
+    # loop below uses: TZID="(UTC+01:00) Amsterdam" is legal and common.
+    quoted = False
+    i = -1
+    for n, ch in enumerate(line):
+        if ch == '"':
+            quoted = not quoted
+        elif ch == ":" and not quoted:
+            i = n
+            break
     if i < 0:
         raise IcsError("property without a colon")
     head, value = line[:i], line[i + 1 :]
@@ -153,7 +162,7 @@ class VTimezone:
 
 def _nth_weekday(year: int, month: int, weekday: int, ordinal: int) -> date | None:
     last = monthrange(year, month)[1]
-    days = [date(year, month, d) for d in range(1, last + 1) if date(year, month, d).weekday() == weekday]
+    days = [d for d in (date(year, month, i) for i in range(1, last + 1)) if d.weekday() == weekday]
     if not days:
         return None
     idx = ordinal - 1 if ordinal > 0 else len(days) + ordinal
@@ -332,7 +341,12 @@ def parse_calendar(text: str) -> tuple[list[VEvent], dict[str, VTimezone], list[
                 except Exception as exc:  # noqa: BLE001 - one bad event must not lose the rest
                     problems.append(str(exc)[:120])
             elif comp in ("STANDARD", "DAYLIGHT") and tz_current is not None and tz_sub:
-                _finish_tz_rule(tz_current, tz_sub)
+                try:
+                    _finish_tz_rule(tz_current, tz_sub)
+                except (ValueError, KeyError, IndexError) as exc:
+                    # A garbage transition rule drops that rule; the zone keeps
+                    # the rest. Losing the calendar over it is not a trade.
+                    problems.append(f"{tz_current.tzid or 'VTIMEZONE'} rule: {exc}"[:120])
                 tz_sub = None
             elif comp == "VTIMEZONE" and tz_current is not None:
                 if tz_current.tzid:
@@ -345,12 +359,15 @@ def parse_calendar(text: str) -> tuple[list[VEvent], dict[str, VTimezone], list[
         # VTIMEZONE internals
         if tz_current is not None:
             if tz_sub is not None:
-                if name == "TZOFFSETTO":
-                    tz_sub["offset_to"] = _parse_offset(value)
-                elif name == "RRULE":
-                    tz_sub["rrule"] = parse_rrule(value)
-                elif name == "DTSTART":
-                    tz_sub["dtstart"] = value.strip()
+                try:
+                    if name == "TZOFFSETTO":
+                        tz_sub["offset_to"] = _parse_offset(value)
+                    elif name == "RRULE":
+                        tz_sub["rrule"] = parse_rrule(value)
+                    elif name == "DTSTART":
+                        tz_sub["dtstart"] = value.strip()
+                except (ValueError, KeyError, IndexError) as exc:
+                    problems.append(f"{tz_current.tzid or 'VTIMEZONE'} {name}: {exc}"[:120])
             elif name == "TZID":
                 tz_current.tzid = value.strip()
             continue
@@ -730,7 +747,13 @@ def occurrences_on(ev: VEvent, target: date, zones: dict, overrides: set) -> lis
         for rd in ev.rdates:
             rd_day = rd.local_date()
             if rd_day is not None and 0 <= (target - rd_day).days < span:
-                emit(None if rd.all_day else rd.local(), rd.all_day, rd_day)
+                # RFC 5545: EXDATE removes occurrences from RDATE too, not just
+                # from RRULE. Pass the same value emit() gets -- excluded()
+                # compares instants with a <60s tolerance.
+                start_local = None if rd.all_day else rd.local()
+                if excluded(rd_day, start_local):
+                    continue
+                emit(start_local, rd.all_day, rd_day)
         return results
 
     anchor = _anchor_date(ev.start)
@@ -855,8 +878,13 @@ def _expand(text: str, targets: list[date], my_emails: set[str] | None) -> dict:
         # nothing itself.
         if ev.recurrence_id is not None and ev.status == "CANCELLED":
             continue
-        for target in targets:
-            by_day[target].extend(occurrences_on(ev, target, zones, overrides))
+        try:
+            for target in targets:
+                by_day[target].extend(occurrences_on(ev, target, zones, overrides))
+        except (ValueError, KeyError, OverflowError, IndexError) as exc:
+            # A malformed RRULE/RDATE costs its own event, never the feed --
+            # the same rule the per-event build guard keeps at line 332.
+            problems.append(f"{ev.summary or ev.uid}: {exc}"[:120])
 
     for day in by_day.values():
         day.sort(key=lambda o: (not o["all_day"],

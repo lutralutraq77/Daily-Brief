@@ -20,7 +20,6 @@ than in the collectors, so the collectors stay readable:
 
 from __future__ import annotations
 
-import gzip
 import html as htmllib
 import json
 import random
@@ -32,6 +31,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -50,7 +50,8 @@ CONNECTIVITY_URL = "http://www.msftconnecttest.com/connecttest.txt"
 CONNECTIVITY_EXPECT = "Microsoft Connect Test"
 
 _ATOM = "{http://www.w3.org/2005/Atom}"
-_RDF_ITEM = "{http://purl.org/rss/1.0/}item"
+_RDF = "{http://purl.org/rss/1.0/}"
+_RDF_ITEM = f"{_RDF}item"          # derived, so the two cannot drift again
 
 # Populated by the first successful response, for the clock-skew check.
 server_date: datetime | None = None
@@ -131,7 +132,14 @@ def fetch(
                 # arXiv asks for one request per 3s, and answering a rate limit
                 # 1.5s later is how a transient block becomes a lasting one.
                 delay = max(delay, MIN_RATE_LIMIT_BACKOFF)
-            _sleep(min(delay, MAX_BACKOFF))
+            # Cap the exponential, never the server's own number: anything over
+            # MAX_RETRY_AFTER has already raised below, so what survives here is
+            # a wait the brief CAN afford and re-asking early is what earns a block.
+            _sleep(delay if retry_after is not None else min(delay, MAX_BACKOFF))
+        # retry_after only ever describes the immediately preceding response.
+        # It is reassigned only in the HTTPError branch, so without this a 503's
+        # Retry-After outlives a subsequent URLError and is slept on again.
+        retry_after = None
         try:
             req = urllib.request.Request(
                 url,
@@ -149,10 +157,22 @@ def fetch(
                     raise FetchError(f"body exceeded {MAX_BYTES // 1024 // 1024} MB")
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 if headers.get("content-encoding", "").lower() == "gzip":
+                    # Bound the DECOMPRESSED size too. A 5 MB gzip of repeated
+                    # bytes expands to gigabytes, and on Android that is an OOM
+                    # kill of the app rather than one failed section.
+                    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
                     try:
-                        raw = gzip.decompress(raw)
-                    except (OSError, EOFError) as exc:
+                        out = d.decompress(raw, MAX_BYTES + 1)
+                    except (zlib.error, OSError, EOFError) as exc:
                         raise FetchError(f"gzip decode failed: {exc}") from exc
+                    if len(out) > MAX_BYTES:
+                        raise FetchError(f"body exceeded {MAX_BYTES // 1024 // 1024} MB")
+                    if not d.eof:
+                        # decompressobj, unlike gzip.decompress, returns short on
+                        # a truncated stream instead of raising. A half feed must
+                        # be a named failure, not a mystery XML parse error.
+                        raise FetchError("gzip stream truncated")
+                    raw = out
                 if server_date is None and headers.get("date"):
                     server_date = parse_when(headers["date"])
                 final = resp.geturl()
@@ -318,16 +338,24 @@ def parse_when(s: str | None) -> datetime | None:
 _ENTITY = re.compile(rb"&(?!#|amp;|lt;|gt;|quot;|apos;)([A-Za-z][A-Za-z0-9]{1,31});")
 
 
+_XML_ESCAPES = ((b"&", b"&amp;"), (b"<", b"&lt;"), (b">", b"&gt;"),
+                (b'"', b"&quot;"), (b"'", b"&#39;"))
+
+
 def xml_safe(b: bytes) -> bytes:
     """Resolve undefined HTML entities before ElementTree sees them.
 
     A single `&nbsp;` raises 'undefined entity' and loses the entire feed.
+
+    Re-escape whatever comes back: html.unescape also knows the uppercase
+    aliases the lookahead does not exclude, and &LT; resolving to a literal <
+    is the same lost feed by a different route.
     """
     def sub(m: re.Match) -> bytes:
-        resolved = htmllib.unescape("&" + m.group(1).decode("ascii") + ";")
-        if resolved.startswith("&"):
-            return b"&amp;" + m.group(1) + b";"
-        return resolved.encode("utf-8")
+        resolved = htmllib.unescape("&" + m.group(1).decode("ascii") + ";").encode("utf-8")
+        for ch, esc in _XML_ESCAPES:
+            resolved = resolved.replace(ch, esc)
+        return resolved
 
     return _ENTITY.sub(sub, b)
 
@@ -374,9 +402,9 @@ def parse_feed(body: bytes, source: str) -> list[Item]:
         or root.findall(f".//{_RDF_ITEM}")
     )
     for node in nodes:
-        title = clean_text(_first_text(node, "title", f"{_ATOM}title"), 200)
+        title = clean_text(_first_text(node, "title", f"{_ATOM}title", f"{_RDF}title"), 200)
 
-        link = _first_text(node, "link", f"{_RDF_ITEM}link").strip()
+        link = _first_text(node, "link", f"{_RDF}link").strip()
         if not link:
             # Atom puts the URL in an attribute, not in text.
             for ln in node.findall(f"{_ATOM}link"):
@@ -395,7 +423,7 @@ def parse_feed(body: bytes, source: str) -> list[Item]:
         if not title or not link:
             continue
         summary = clean_text(
-            _first_text(node, "description", f"{_ATOM}summary",
+            _first_text(node, "description", f"{_ATOM}summary", f"{_RDF}description",
                         "{http://purl.org/rss/1.0/modules/content/}encoded"),
             420,
         )

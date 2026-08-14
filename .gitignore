@@ -26,6 +26,7 @@ __pycache__/
 dist/
 build/
 packaging/android/.gradle/
+packaging/android/.kotlin/
 packaging/android/app/src/main/python/
 packaging/arch/*.pkg.tar.zst
 packaging/arch/pkg/

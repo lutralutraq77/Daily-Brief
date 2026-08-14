@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily brief every morning at 08:00
+Documentation=file:/usr/share/doc/dailybrief/README.md
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+# A desktop is often asleep at 08:00. Persistent runs the brief on the next
+# wake instead of silently skipping the day, matching the Windows task's
+# StartWhenAvailable.
+Persistent=true
+AccuracySec=1m
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

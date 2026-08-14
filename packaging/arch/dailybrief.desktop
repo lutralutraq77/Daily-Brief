@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Daily Brief
+GenericName=Morning briefing
+Comment=Weather, calendar, headlines and a paper, generated locally
+Exec=dailybrief open
+TryExec=dailybrief
+Icon=dailybrief
+Terminal=false
+Categories=Utility;News;
+Keywords=news;weather;calendar;brief;briefing;rss;
+Actions=Refresh;
+
+[Desktop Action Refresh]
+Name=Generate today's brief now
+Exec=dailybrief run --open

@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,9 +11,20 @@ sys.path.insert(0, str(ROOT))
 import dailybrief as db
 import sources as S
 
-CFG = ROOT / "config.json"
-BACKUP = CFG.with_suffix(".json.testbak")
-shutil.copyfile(CFG, BACKUP)
+# Run against a COPY in a temp directory, never the live config.
+#
+# This suite deliberately corrupts config.json to prove the loader degrades
+# loudly. Doing that to the real file risks destroying real settings if the
+# process is killed between corrupting it and restoring it, and its warnings
+# land in the production log looking exactly like a genuine morning failure.
+TMP = Path(tempfile.mkdtemp(prefix="dailybrief-tests-"))
+CFG = TMP / "config.json"
+shutil.copyfile(ROOT / "config.json", CFG)
+
+db.CONFIG_PATH = CFG
+db.STATE_PATH = TMP / "state.json"
+db.LOGS_DIR = TMP
+db.LOG_PATH = TMP / "test.log"
 
 checks = {}
 def check(n, c): checks[n] = bool(c)
@@ -117,11 +129,10 @@ try:
     check("12h times rendered", "5:40am" in md and "8:54pm" in md)
 
 finally:
-    shutil.copyfile(BACKUP, CFG)
-    BACKUP.unlink()
+    shutil.rmtree(TMP, ignore_errors=True)
 
 bad_n = [k for k, v in checks.items() if not v]
 for k, v in checks.items():
     print(("  PASS " if v else "  FAIL ") + k)
-print(f"\n{len(checks) - len(bad_n)}/{len(checks)} passed  (config.json restored)")
+print(f"\n{len(checks) - len(bad_n)}/{len(checks)} passed  (ran in a temp copy; live config untouched)")
 sys.exit(1 if bad_n else 0)

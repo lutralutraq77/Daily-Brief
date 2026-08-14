@@ -111,7 +111,15 @@ else {
     # reconfigures its own streams to UTF-8 in main() instead, which also covers
     # pythonw's stdout being None entirely.
     $action = New-ScheduledTaskAction -Execute $Pythonw -Argument ('"{0}" run' -f $script) -WorkingDirectory $base
-    $trigger = New-ScheduledTaskTrigger -Daily -At $at
+    # Two triggers, not one. -StartWhenAvailable is meant to catch up a run the
+    # PC slept through, but it did not fire after an unexpected shutdown left the
+    # machine off at 08:00 -- so a logon trigger is the actual safety net. It is
+    # free on days the timed run worked: `run` skips when today's brief already
+    # exists, and only --force regenerates.
+    $daily = New-ScheduledTaskTrigger -Daily -At $at
+    $logon = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+    $logon.Delay = 'PT3M'      # let the desktop and the network settle first
+    $trigger = @($daily, $logon)
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
         -MultipleInstances IgnoreNew -RestartCount 2 -RestartInterval (New-TimeSpan -Minutes 5)
@@ -123,7 +131,8 @@ else {
 
     $info = Get-ScheduledTaskInfo -TaskName $TaskName
     Write-Host "Task        : '$TaskName' daily at $Time (next run $($info.NextRunTime))"
-    Write-Host "              Missed runs (PC off) fire shortly after your next logon."
+    Write-Host "              Plus a logon trigger, so a day the PC was off at $Time still"
+    Write-Host "              gets its brief. It no-ops when today's already exists."
 }
 
 Write-Host ''

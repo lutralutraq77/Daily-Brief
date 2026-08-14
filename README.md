@@ -321,8 +321,12 @@ chrome, via the `.prose` styles.
 A per-user Scheduled Task named **Daily Brief** runs `pythonw.exe dailybrief.py run`
 daily at 08:00. `pythonw` means no console window flashes.
 
-Registered with `-StartWhenAvailable`, so if the PC was off at 08:00 it runs
-shortly after your next logon rather than skipping the day.
+It has **two triggers**: daily at 08:00, and once at logon (3 minutes in).
+`-StartWhenAvailable` alone is supposed to catch up a missed run, but on
+2026-08-14 an unexpected shutdown left the PC off at 08:00 and no catch-up
+fired — hence the logon trigger, which is the real safety net. It costs nothing
+on a normal day: `run` skips when today's brief already exists, and only
+`--force` regenerates.
 
 Change the time by re-running the installer — it is idempotent:
 
@@ -419,6 +423,70 @@ ICS/recurrence engine, and the 3×3 plan (month-boundary arithmetic, stale-week
 detection, free-time placement across DST and overnight events, both renderers).
 Run them after changing anything in `netlib.py`, `icslib.py`, `sources.py`,
 `plan.py` or the renderer.
+
+## Packaged builds
+
+The collectors are standard-library Python that emits HTML, so the same code
+runs on all three platforms. Only three things differ per platform — where
+files live, how a notification is shown, and how a file is opened — and
+`platform_shim.py` is the only place that knows the difference.
+
+**Requires Python 3.12 or newer.** The code uses PEP 701 f-strings (multi-line
+expressions and backslash escapes inside the braces), which are a `SyntaxError`
+on 3.11 and earlier.
+
+### Windows (.exe)
+
+```bash
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+```
+
+Produces `dist\windows\` with `DailyBrief.exe` (console, for the CLI) and
+`DailyBriefw.exe` (windowless, for the scheduled run — a console app on a daily
+timer flashes a black window in your face). Config, `briefs\` and `logs\` live
+beside the exe, so the folder is the whole install; set `DAILYBRIEF_HOME` to put
+them elsewhere.
+
+### Arch Linux
+
+```bash
+cd packaging/arch && makepkg -si
+```
+
+Installs the modules to `/usr/lib/dailybrief`, a launcher to `/usr/bin`, and a
+systemd **user** timer. `/usr` is read-only at runtime, so user data goes to
+`~/.local/share/dailybrief` and the launcher seeds a config on first run.
+
+```bash
+systemctl --user enable --now dailybrief.timer
+```
+
+`libnotify` gives you desktop notifications and `xdg-utils` opens the brief;
+without them the app says so and carries on.
+
+### Android (.apk)
+
+```bash
+powershell -ExecutionPolicy Bypass -File packaging\android\build.ps1 assembleRelease
+```
+
+The APK embeds CPython via [Chaquopy](https://chaquo.com/chaquopy/) and runs the
+same collectors byte for byte — the Kotlin shell only owns the UI, the daily
+`WorkManager` job and the notification. The build copies every top-level `*.py`
+from the repo root at build time, so the app cannot drift from the desktop
+builds.
+
+There is no offline story and no push: it fetches when it runs, exactly like the
+desktop builds.
+
+To sign it, create `packaging/android/keystore.properties`:
+
+```properties
+storeFile=dailybrief-release.jks
+storePassword=...
+keyAlias=dailybrief
+keyPassword=...
+```
 
 ## Uninstall
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Daily Brief</string>
+    <string name="brief_channel_name">Daily brief</string>
+    <string name="brief_channel_desc">Tells you when the morning brief is ready</string>
+</resources>

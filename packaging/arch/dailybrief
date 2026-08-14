@@ -1,0 +1,22 @@
+#!/bin/sh
+# Daily Brief launcher.
+#
+# The code is installed read-only under /usr/lib, so everything the app writes
+# goes to the user's XDG data directory instead -- platform_shim.app_home()
+# works this out on its own. This script only exists to seed a config on the
+# first run, so a fresh install has something to edit rather than an error.
+
+set -eu
+
+DAILYBRIEF_DIR="${DAILYBRIEF_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/dailybrief}"
+EXAMPLE="/usr/share/doc/dailybrief/config.example.json"
+
+if [ ! -f "$DAILYBRIEF_DIR/config.json" ] && [ -f "$EXAMPLE" ]; then
+    mkdir -p "$DAILYBRIEF_DIR"
+    cp "$EXAMPLE" "$DAILYBRIEF_DIR/config.json"
+    printf '%s\n' \
+        "Created $DAILYBRIEF_DIR/config.json from the example." \
+        "Set your city in it, then run: dailybrief run --open" >&2
+fi
+
+exec /usr/bin/python3 /usr/lib/dailybrief/dailybrief.py "$@"

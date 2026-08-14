@@ -1,0 +1,82 @@
+# Maintainer: Danny <lutralutraq77@users.noreply.github.com>
+#
+# Builds from the working tree this file ships in, because Daily Brief has no
+# release tarball or public remote:
+#
+#     cd packaging/arch && makepkg -si
+#
+# The app is standard library only, so there is nothing to compile and the
+# package is arch-independent. The only build step is rendering the icon.
+
+pkgname=dailybrief
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="Credential-free morning briefing: weather, calendar, headlines and papers"
+arch=('any')
+url="https://github.com/local/dailybrief"
+license=('custom:unlicensed')
+# 3.12, not 3.10: the code uses PEP 701 f-strings (multi-line expressions and
+# backslash escapes inside the braces), which are a SyntaxError before 3.12.
+depends=('python>=3.12')
+optdepends=(
+  'libnotify: desktop notification when the brief is ready'
+  'xdg-utils: open the brief in your browser'
+)
+source=()
+sha256sums=()
+
+# The checkout root, two levels up from packaging/arch.
+_srcroot="$(realpath "${startdir}/../..")"
+
+# Every top-level module, not a hand-maintained list: a list goes stale as soon
+# as a module is added and the app then dies at runtime with ModuleNotFoundError.
+# Safe as a glob because the secrets here are config.json and calendars.txt.
+
+build() {
+  cd "$_srcroot"
+  # Render the icon into $srcdir rather than the checkout: a build must not
+  # write into the source tree, and app_home() would otherwise send it there.
+  mkdir -p "$srcdir/gen"
+  DAILYBRIEF_HOME="$srcdir/gen" python dailybrief.py icon >/dev/null
+}
+
+package() {
+  cd "$_srcroot"
+
+  install -dm755 "$pkgdir/usr/lib/$pkgname"
+  for _m in *.py; do
+    install -Dm644 "$_m" "$pkgdir/usr/lib/$pkgname/$_m"
+  done
+
+  # Ship the bytecode: /usr/lib is read-only at runtime, so without this every
+  # run recompiles in memory and silently fails to cache it.
+  #
+  # One forced pass, not two. -s/-p rewrite the source path baked into each
+  # .pyc, and a second compileall would skip the already-current files and
+  # leave $pkgdir showing in the user's tracebacks. unchecked-hash is the right
+  # invalidation mode for packaged files, whose mtimes pacman controls.
+  python -m compileall -q -f -o 0 -o 1 \
+    --invalidation-mode unchecked-hash \
+    -s "$pkgdir" -p / "$pkgdir/usr/lib/$pkgname" >/dev/null
+
+  install -Dm755 "packaging/arch/dailybrief" "$pkgdir/usr/bin/dailybrief"
+
+  install -Dm644 "packaging/arch/dailybrief.service" \
+    "$pkgdir/usr/lib/systemd/user/dailybrief.service"
+  install -Dm644 "packaging/arch/dailybrief.timer" \
+    "$pkgdir/usr/lib/systemd/user/dailybrief.timer"
+
+  install -Dm644 "packaging/arch/dailybrief.desktop" \
+    "$pkgdir/usr/share/applications/dailybrief.desktop"
+
+  install -Dm644 "$srcdir/gen/icon.png" \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/dailybrief.png"
+
+  # Shipped as examples, never as live config: calendars.txt holds a Google
+  # secret iCal URL, which is a permanent bearer token for the whole calendar.
+  install -Dm644 "config.example.json" \
+    "$pkgdir/usr/share/doc/$pkgname/config.example.json"
+  install -Dm644 "calendars.example.txt" \
+    "$pkgdir/usr/share/doc/$pkgname/calendars.example.txt"
+  install -Dm644 "README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

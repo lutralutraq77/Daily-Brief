@@ -1,0 +1,15 @@
+[Unit]
+Description=Generate the daily brief
+Documentation=file:/usr/share/doc/dailybrief/README.md
+# The collectors all need the network; without this the 08:00 run on a laptop
+# that has just woken up fails every source at once and writes an empty brief.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/dailybrief run
+# The collectors enforce their own deadline; this is only a backstop against a
+# run that wedges completely.
+TimeoutStartSec=300
+Nice=10

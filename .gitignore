@@ -23,6 +23,21 @@ tests/render_test.html
 # --- build artefacts ---
 __pycache__/
 *.py[cod]
+dist/
+build/
+packaging/android/.gradle/
+packaging/android/app/src/main/python/
+packaging/arch/*.pkg.tar.zst
+packaging/arch/pkg/
+packaging/arch/src/
+
+# --- signing: the release key and its password ---
+# Lose these and Android will refuse to install an update over the app. They
+# are deliberately untracked; back them up somewhere that is not this repo.
+*.jks
+*.keystore
+keystore.properties
+packaging/android/local.properties
 
 # --- generated icons (rebuild with: python dailybrief.py icon) ---
 icon.png

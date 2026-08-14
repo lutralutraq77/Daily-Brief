@@ -30,7 +30,13 @@ import urllib.parse
 import zlib
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent
+import platform_shim
+
+# BASE is where the user's data lives, which is not always where the code lives:
+# a git checkout keeps them together, a PyInstaller build sits beside the .exe,
+# and a packaged Linux install writes to XDG. See platform_shim.app_home().
+BASE = platform_shim.app_home()
+RESOURCES = platform_shim.resource_dir()
 CONFIG_PATH = BASE / "config.json"
 BRIEFS_DIR = BASE / "briefs"
 LOGS_DIR = BASE / "logs"
@@ -38,7 +44,7 @@ LOG_PATH = LOGS_DIR / "dailybrief.log"
 STATE_PATH = BASE / "state.json"
 ICON_PATH = BASE / "icon.png"
 ICO_PATH = BASE / "icon.ico"
-TOAST_PS1 = BASE / "toast.ps1"
+TOAST_PS1 = RESOURCES / "toast.ps1"
 LATEST_HTML = BRIEFS_DIR / "latest.html"
 
 AUMID = "Local.DailyBrief"
@@ -1727,34 +1733,17 @@ def generate(cfg: dict, today: dt.date) -> tuple[str, dict, dict]:
 
 
 def send_toast(title: str, body: str, *, launch: str = LAUNCH_URI, attribution: str = "") -> bool:
+    """Notify the user however this platform does it. False means they were not told."""
     import netlib
 
-    title, body = netlib.scrub(title), netlib.scrub(body)
-    if not TOAST_PS1.exists():
-        log(f"WARN: {TOAST_PS1.name} missing; cannot toast")
-        return False
-    cmd = [
-        "powershell.exe", "-NoProfile", "-NonInteractive",
-        "-ExecutionPolicy", "Bypass", "-File", str(TOAST_PS1),
-        "-Title", title, "-Body", body, "-Aumid", AUMID,
-    ]
-    if launch:
-        cmd += ["-Launch", launch]
-    if attribution:
-        cmd += ["-Attribution", attribution]
-    try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=45,
-            creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
-        if proc.returncode != 0 or "TOAST_FAILED" in out:
-            log(f"WARN: toast failed: {out[:400]}")
-            return False
-        return True
-    except (OSError, subprocess.SubprocessError) as exc:
-        log(f"WARN: toast could not run: {exc}")
-        return False
+    return platform_shim.notify(
+        netlib.scrub(title),
+        netlib.scrub(body),
+        launch=launch,
+        attribution=attribution,
+        icon=ICON_PATH,
+        log=log,
+    )
 
 
 def find_browser(cfg: dict) -> str | None:
@@ -1808,7 +1797,7 @@ def open_brief(cfg: dict | None = None, path: Path | None = None) -> None:
             return
         except OSError as exc:
             log(f"WARN: app-window launch failed ({exc}); falling back to default handler")
-    os.startfile(str(target.resolve()))  # noqa: S606 - local file, default handler
+    platform_shim.open_path(target, log=log)
 
 
 # ---------------------------------------------------------------- icon

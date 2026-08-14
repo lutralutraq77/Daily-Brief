@@ -41,6 +41,9 @@ USER_AGENT = "DailyBrief/1.1 (personal daily-brief script; stdlib urllib)"
 MAX_BYTES = 5 * 1024 * 1024          # AP served 2 MB of HTML where a feed was expected
 DEFAULT_TIMEOUT = 15
 RETRY_STATUSES = {408, 429, 500, 502, 503, 504}
+MAX_BACKOFF = 8.0                    # the brief has a deadline; do not sleep past it
+MIN_RATE_LIMIT_BACKOFF = 3.0         # arXiv's stated limit is one request per 3s
+MAX_RETRY_AFTER = 30.0               # longer than this, give up instead of waiting
 
 # Hosts that returned a captive-portal-style body get reported, not parsed.
 CONNECTIVITY_URL = "http://www.msftconnecttest.com/connecttest.txt"
@@ -116,13 +119,19 @@ def fetch(
     """GET a URL and return decoded bytes, or raise FetchError with a reason."""
     global server_date
     last = "unknown error"
+    last_status: int | None = None
+    retry_after: float | None = None
 
     for attempt in range(retries + 1):
         if attempt:
             # Jittered backoff. Naive retries are how you turn a transient 429
             # into a lasting block on Open-Meteo / arXiv / ZenQuotes.
-            delay = (2 ** attempt) * (0.5 + random.random())
-            _sleep(min(delay, 8.0))
+            delay = retry_after if retry_after is not None else (2 ** attempt) * (0.5 + random.random())
+            if last_status == 429:
+                # arXiv asks for one request per 3s, and answering a rate limit
+                # 1.5s later is how a transient block becomes a lasting one.
+                delay = max(delay, MIN_RATE_LIMIT_BACKOFF)
+            _sleep(min(delay, MAX_BACKOFF))
         try:
             req = urllib.request.Request(
                 url,
@@ -158,8 +167,15 @@ def fetch(
                 )
         except urllib.error.HTTPError as exc:
             last = f"HTTP {exc.code}"
+            last_status = exc.code
             if exc.code not in RETRY_STATUSES:
                 raise FetchError(last) from exc
+            # Honour Retry-After when the server sends one. If it wants longer
+            # than the brief can wait, stop now and say so rather than burning
+            # the remaining attempts on requests that are certain to be refused.
+            retry_after = _retry_after_seconds(exc.headers.get("Retry-After"))
+            if retry_after is not None and retry_after > MAX_RETRY_AFTER:
+                raise FetchError(f"{last}, server asked to wait {retry_after:.0f}s") from exc
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", exc)
             if isinstance(reason, ssl.SSLError):
@@ -173,6 +189,23 @@ def fetch(
             last = f"connection failed: {exc}"
 
     raise FetchError(last)
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Parse Retry-After, which is either delta-seconds or an HTTP-date.
+
+    Returns None when the header is absent or unusable, so the caller falls back
+    to its own backoff rather than treating a malformed header as "retry now".
+    """
+    if not value:
+        return None
+    raw = value.strip()
+    if raw.isdigit():
+        return float(raw)
+    when = parse_when(raw)
+    if when is None:
+        return None
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
 
 
 def _sleep(seconds: float) -> None:

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import pathlib
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -456,11 +457,71 @@ def tech(limit: int = 2, min_points: int = 100) -> Section:
     return Section("tech", OK, data=items, elapsed_ms=_since(started))
 
 
-def paper(categories: list[str] | None = None) -> Section:
+_PAPER_CACHE_MAX_AGE = dt.timedelta(days=7)
+
+
+def _write_paper_cache(path: pathlib.Path, data: dict) -> None:
+    """Best effort. A cache that cannot be written must never break the brief."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(data)
+        published = payload.get("published")
+        payload["published"] = published.isoformat() if published else None
+        path.write_text(
+            json.dumps({
+                "cached_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "data": payload,
+            }),
+            "utf-8",
+        )
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def _read_paper_cache(path: pathlib.Path) -> tuple[dict | None, dt.datetime | None]:
+    """Return (data, cached_at), or (None, None) if absent, unreadable or too old."""
+    try:
+        blob = json.loads(path.read_text("utf-8"))
+        data = dict(blob["data"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, None
+    cached_at = netlib.parse_when(blob.get("cached_at"))
+    if cached_at is None:
+        return None, None
+    age = dt.datetime.now(dt.timezone.utc) - cached_at
+    # A little negative age is just clock skew; a lot means the file is not trustworthy.
+    if age > _PAPER_CACHE_MAX_AGE or age < -dt.timedelta(minutes=5):
+        return None, None
+    data["published"] = netlib.parse_when(data.get("published"))
+    return data, cached_at
+
+
+def _paper_from_cache(cache_dir, live_error: str, started: int) -> Section:
+    """Serve the last good paper, saying plainly that it is not today's."""
+    if cache_dir is not None:
+        data, cached_at = _read_paper_cache(pathlib.Path(cache_dir) / "paper.json")
+        if data:
+            return Section(
+                "paper", OK, data=data,
+                reason=f"arXiv unreachable ({live_error}); showing the cached paper",
+                detail={
+                    "stale": f"carried over from {cached_at.astimezone():%a %d %b}",
+                    "live_error": live_error,
+                },
+                elapsed_ms=_since(started),
+            )
+    return Section("paper", FAILED, reason=live_error, elapsed_ms=_since(started))
+
+
+def paper(categories: list[str] | None = None, cache_dir=None) -> Section:
     """Paper of the day: the newest submission in the configured arXiv categories.
 
     One request per morning -- arXiv asks for 1 req/3s and was seen 429ing under
     burst testing from this IP, so never retry-loop this one aggressively.
+
+    A rate limit is transient but the brief is not: it is written once and read
+    all day. So the last good paper is cached and served when the live fetch
+    fails, labelled as carried over rather than passed off as today's.
     """
     import xml.etree.ElementTree as ET
 
@@ -473,11 +534,13 @@ def paper(categories: list[str] | None = None) -> Section:
         resp = fetch(url, accept="application/atom+xml", retries=1)
         root = ET.fromstring(netlib.xml_safe(resp.body))
     except (FetchError, ET.ParseError) as exc:
-        return Section("paper", FAILED, reason=str(exc), elapsed_ms=_since(started))
+        return _paper_from_cache(cache_dir, str(exc), started)
 
     A = "{http://www.w3.org/2005/Atom}"
     entries = root.findall(f"{A}entry")
     if not entries:
+        # A genuinely quiet category is not a failure, so this does not fall back
+        # to the cache -- that would report an old paper as though it were new.
         return Section("paper", EMPTY, reason=f"no recent submissions in {', '.join(cats)}",
                        elapsed_ms=_since(started))
 
@@ -488,20 +551,19 @@ def paper(categories: list[str] | None = None) -> Section:
     abstract = clean_text(e.findtext(f"{A}summary"), 460)
     # An honest reading-time: the abstract's own word count at ~200 wpm.
     minutes = max(1, round(len(abstract.split()) / 200))
-    return Section(
-        "paper", OK,
-        data={
-            "id": arxiv_id.split("v")[0] or arxiv_id,
-            "title": clean_text(e.findtext(f"{A}title"), 220),
-            "abstract": abstract,
-            "authors": authors,
-            "category": primary.get("term") if primary is not None else (cats[0] if cats else ""),
-            "published": netlib.parse_when(e.findtext(f"{A}published")),
-            "link": f"https://arxiv.org/abs/{arxiv_id}",
-            "read_minutes": minutes,
-        },
-        elapsed_ms=_since(started),
-    )
+    data = {
+        "id": arxiv_id.split("v")[0] or arxiv_id,
+        "title": clean_text(e.findtext(f"{A}title"), 220),
+        "abstract": abstract,
+        "authors": authors,
+        "category": primary.get("term") if primary is not None else (cats[0] if cats else ""),
+        "published": netlib.parse_when(e.findtext(f"{A}published")),
+        "link": f"https://arxiv.org/abs/{arxiv_id}",
+        "read_minutes": minutes,
+    }
+    if cache_dir is not None:
+        _write_paper_cache(pathlib.Path(cache_dir) / "paper.json", data)
+    return Section("paper", OK, data=data, elapsed_ms=_since(started))
 
 
 def featured(feed: dict | None = None) -> Section:
@@ -742,7 +804,7 @@ def collect(cfg: dict, today: dt.date, deadline_s: int = 90, base_dir=None) -> d
         jobs["tech"] = lambda: tech(int(cfg.get("tech_items", 2)),
                                     int(cfg.get("tech_min_points", 100)))
     if "paper" in enabled:
-        jobs["paper"] = lambda: paper(cfg.get("paper_categories"))
+        jobs["paper"] = lambda: paper(cfg.get("paper_categories"), base / "cache")
     if "featured" in enabled:
         jobs["featured"] = lambda: featured(cfg.get("featured_feed"))
     if "onthisday" in enabled:

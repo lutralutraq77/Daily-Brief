@@ -1168,11 +1168,16 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
             d = pap.data
             when = f"{d['published'].astimezone():%a %d %b}" if d.get("published") else ""
             authors = ", ".join(d["authors"][:3]) + (" et al." if len(d["authors"]) > 3 else "")
+            # A cached paper is still worth reading, but it is not today's, and
+            # the brief must never let those two look identical.
+            stale = pap.detail.get("stale")
             B.append(
                 '<div class="feature">'
                 f'<div class="feature-meta"><span class="tag tag-outline">arXiv</span>'
                 f'<span class="t">{_esc(d["id"])} · {_esc(d["category"])} · '
-                f'~{d["read_minutes"]} min abstract</span></div>'
+                f'~{d["read_minutes"]} min abstract'
+                + (f' · {_esc(stale)}' if stale else '')
+                + '</span></div>'
                 f'<a class="feature-title" href="{_esc(d["link"])}" rel="noopener noreferrer">{_esc(d["title"])}</a>'
                 f'<p class="feature-body">Abstract — {_esc(d["abstract"])}</p>'
                 f'<span class="feature-foot">{_esc(authors)}'

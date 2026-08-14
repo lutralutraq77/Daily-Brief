@@ -677,6 +677,12 @@ def occurrences_on(ev: VEvent, target: date, zones: dict, overrides: set) -> lis
             "location": ev.location,
             "uid": ev.uid,
             "warnings": warnings,
+            # end is None for two different reasons, and a consumer deciding
+            # whether time is free must not confuse them: no DTEND at all is a
+            # genuine zero-length instant (RFC 5545), whereas a DTEND we parsed
+            # and then refused means the duration is UNKNOWN. Only the second
+            # sets this.
+            "end_unknown": bool(end_warning),
         })
 
     def excluded(day: date, start_local) -> bool:
@@ -821,8 +827,12 @@ def declined_by(ev: VEvent, my_emails: set[str]) -> bool:
     return False
 
 
-def events_on(text: str, target: date, my_emails: set[str] | None = None) -> dict:
-    """Everything on `target`, plus what went wrong getting there."""
+def _expand(text: str, targets: list[date], my_emails: set[str] | None) -> dict:
+    """Expand every event across `targets`, parsing the feed exactly once.
+
+    The parse is by far the expensive half -- a 3.3 MB feed is 181 ms -- so a
+    week must not be built by calling events_on() seven times.
+    """
     body = text.lstrip("﻿").strip()
     if not body.startswith("BEGIN:VCALENDAR"):
         raise IcsError("body is not an iCalendar feed")
@@ -835,7 +845,7 @@ def events_on(text: str, target: date, my_emails: set[str] | None = None) -> dic
     overrides = collect_overrides(events)
     mine = {e.lower() for e in (my_emails or set())}
 
-    out: list[dict] = []
+    by_day: dict[date, list[dict]] = {t: [] for t in targets}
     declined = 0
     for ev in events:
         if declined_by(ev, mine):
@@ -845,13 +855,42 @@ def events_on(text: str, target: date, my_emails: set[str] | None = None) -> dic
         # nothing itself.
         if ev.recurrence_id is not None and ev.status == "CANCELLED":
             continue
-        out.extend(occurrences_on(ev, target, zones, overrides))
+        for target in targets:
+            by_day[target].extend(occurrences_on(ev, target, zones, overrides))
 
-    out.sort(key=lambda o: (not o["all_day"], o["start"] or datetime.min.replace(tzinfo=timezone.utc)))
+    for day in by_day.values():
+        day.sort(key=lambda o: (not o["all_day"],
+                                o["start"] or datetime.min.replace(tzinfo=timezone.utc)))
     return {
-        "events": out,
+        "by_day": by_day,
         "total_events": len(events),
         "problems": problems,
         "declined": declined,
         "timezones": sorted(zones),
     }
+
+
+def events_on(text: str, target: date, my_emails: set[str] | None = None) -> dict:
+    """Everything on `target`, plus what went wrong getting there."""
+    got = _expand(text, [target], my_emails)
+    return {
+        "events": got["by_day"][target],
+        "total_events": got["total_events"],
+        "problems": got["problems"],
+        "declined": got["declined"],
+        "timezones": got["timezones"],
+    }
+
+
+def events_between(text: str, start: date, end: date,
+                   my_emails: set[str] | None = None) -> dict:
+    """Every occurrence from `start` to `end` inclusive, keyed by date.
+
+    Same shape as events_on() but with `by_day` in place of `events`. Used to
+    find genuinely free time rather than merely to report today.
+    """
+    if end < start:
+        raise IcsError("end is before start")
+    span = (end - start).days
+    targets = [start + timedelta(days=i) for i in range(span + 1)]
+    return _expand(text, targets, my_emails)

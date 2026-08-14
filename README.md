@@ -227,7 +227,43 @@ boundaries are calendar months with the day clamped to the target month's
 length, so a block starting 31 January hands over to its second topic on
 28 February rather than skipping into March.
 
-Two deliberate refusals, both the same principle:
+**The session is placed in real free time.** Each morning the brief scans your
+calendar from now to the day before the next review and offers the first gap at
+least `session_minutes` long inside `day_start`–`day_end` (45 minutes, 08:00–22:00
+by default), naming what it worked around:
+
+> **Session today 08:00–08:45** (45 min, free in your calendar). Around Standup
+> 09:00, Dinner with friends 18:00.
+
+If today is full it rolls to the next day that is not; if the whole week is
+booked it says so rather than inventing a slot. The week costs no extra request —
+`calendar()` expands seven days from the feed it already downloaded, and
+`icslib.events_between` parses that feed once rather than seven times.
+
+Three kinds of event, deliberately treated differently, because conflating any
+two of them books you twice:
+
+- **All-day** entries do not block the day. Most are labels rather than
+  commitments, and one birthday would otherwise wipe out a week. They are named
+  next to the proposal instead, so a genuine "on leave" is visible.
+- **No `DTEND` at all** is a real zero-length instant in RFC 5545, and is treated
+  as one rather than given an invented duration that would swallow an evening.
+- **A `DTEND` the parser had to drop** — a `TZID` with no `VTIMEZONE` (Exchange
+  exports really do emit these), or an end before its start — means the length is
+  *unknown*, not zero. That day is treated as busy from the event onward and the
+  event is named, because the alternative is offering you a slot inside a
+  fourteen-hour workshop.
+
+Anything that makes a proposal doubtful is said out loud beside it: a calendar
+served from cache, a feed that returned no events at all, or an event whose
+length could not be determined.
+
+The rule that matters: **an unchecked calendar is never reported as a free one.**
+No calendar connected, a failed fetch, or an offline morning all say the session
+could not be placed — because "your evening is free" is a claim, and making it
+from missing data is exactly the double-booking this is meant to prevent.
+
+Two further refusals, both the same principle:
 
 - **An empty slot is reported empty.** A topic with no sources says it has none
   and names the command that fixes it. It never shows a blank where a source
@@ -254,7 +290,7 @@ what you committed to.
 | Tech | Hacker News via Algolia, 1 request | keyless |
 | Paper of the day | newest arXiv submission in `paper_categories` (default `eess.AS`, `cs.SD`) | keyless |
 | News of the day | one story + standfirst from `featured_feed` (default Guardian Long Read) | keyless |
-| 3×3 | your `plan.json`: this week's three changes, this month's topic and its source | local, no network |
+| 3×3 | your `plan.json`: this week's three changes, this month's topic and its source, and a session placed in free calendar time | local (rides on the calendar fetch) |
 | On this day | Wikimedia on-this-day feed | keyless |
 | Bank holiday | GOV.UK, **only** if one is within 10 days | keyless |
 
@@ -377,11 +413,12 @@ quietly starts 403ing visible on the morning it happens.
 python tests\run_all.py
 ```
 
-Five suites, ~320 checks: the markdown renderer, the failure-mode hardening
+Five suites, ~380 checks: the markdown renderer, the failure-mode hardening
 (feed parsing, encodings, tri-state sections), location/units settings, the
 ICS/recurrence engine, and the 3×3 plan (month-boundary arithmetic, stale-week
-detection, both renderers). Run them after changing anything in `netlib.py`,
-`icslib.py`, `sources.py`, `plan.py` or the renderer.
+detection, free-time placement across DST and overnight events, both renderers).
+Run them after changing anything in `netlib.py`, `icslib.py`, `sources.py`,
+`plan.py` or the renderer.
 
 ## Uninstall
 

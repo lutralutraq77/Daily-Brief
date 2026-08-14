@@ -49,9 +49,19 @@ WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", 
 
 VERDICTS = ("kept", "dropped", "retry")
 
+# How long a session is worth sitting down for, and the hours a session may be
+# proposed in. Both are overridable in plan.json; the day window exists because
+# "any free gap" would otherwise happily offer you 03:00.
+DEFAULT_SESSION_MINUTES = 45
+DEFAULT_DAY_START = "08:00"
+DEFAULT_DAY_END = "22:00"
+
 DEFAULT_PLAN: dict[str, Any] = {
     "start": "",
     "review_day": "sunday",
+    "session_minutes": DEFAULT_SESSION_MINUTES,
+    "day_start": DEFAULT_DAY_START,
+    "day_end": DEFAULT_DAY_END,
     "topics": [],
     "weekly": {"week_of": "", "changes": [], "history": []},
 }
@@ -163,6 +173,150 @@ def week_of_month(month_start: dt.date, today: dt.date) -> int:
     output", and a 31-day month must not roll past it into a week with no job.
     """
     return max(1, min(4, (today - month_start).days // 7 + 1))
+
+
+# --------------------------------------------------------------- free time
+
+
+def _hhmm(value, fallback: str) -> dt.time:
+    """A HH:MM string as a time, falling back rather than raising."""
+    try:
+        hh, _, mm = str(value or fallback).partition(":")
+        return dt.time(int(hh), int(mm or 0))
+    except (TypeError, ValueError):
+        hh, _, mm = fallback.partition(":")
+        return dt.time(int(hh), int(mm))
+
+
+def _end_is_unknown(ev: dict) -> bool:
+    """Did icslib parse an end and then refuse it, leaving the length unknown?
+
+    Checked via the explicit flag, with the warning text as a fallback so an
+    occurrence built by an older path is still read correctly.
+    """
+    if ev.get("end_unknown"):
+        return True
+    return any("end dropped" in str(w) for w in (ev.get("warnings") or []))
+
+
+def busy_intervals(events: list[dict]) -> tuple[list[tuple[dt.datetime, dt.datetime, str]],
+                                                list[str], list[str]]:
+    """Timed events as local (start, end, title), plus all-day and
+    unknown-length titles.
+
+    Three cases, and conflating any two of them books you twice:
+
+    - **All-day** entries do NOT block time. Most are birthdays or labels, and
+      blocking a whole day on one would leave you unable to schedule all week.
+      Returned separately so a genuine "on leave" is visible beside the proposal.
+    - **No DTEND at all** is a real zero-length instant in RFC 5545. Treated as
+      one, rather than inventing a duration that would swallow a free evening.
+    - **A DTEND that icslib parsed and then dropped** (a TZID with no VTIMEZONE,
+      or an end before its start) means the length is UNKNOWN, not zero. Assumed
+      to run to the end of the day, because the alternative is offering a slot
+      inside a fourteen-hour workshop. Also named, so the day is not mysteriously
+      full.
+    """
+    busy, all_day, unknown = [], [], []
+    for ev in events or []:
+        title = _clean(ev.get("summary") or "(no title)")
+        if ev.get("all_day"):
+            all_day.append(title)
+            continue
+        start, end = ev.get("start"), ev.get("end")
+        if not start:
+            continue
+        start = start.astimezone()
+        if _end_is_unknown(ev):
+            unknown.append(title)
+            # Clipped to the day's window by free_windows.
+            busy.append((start, start + dt.timedelta(hours=24), title))
+            continue
+        end = end.astimezone() if end else start
+        if end < start:
+            start, end = end, start
+        busy.append((start, end, title))
+    busy.sort(key=lambda b: b[0])
+    return busy, all_day, unknown
+
+
+def free_windows(busy, day_start: dt.time, day_end: dt.time, day: dt.date,
+                 not_before: dt.datetime | None = None) -> list[tuple[dt.datetime, dt.datetime]]:
+    """Gaps between `busy` inside one day's waking window, merged and clipped."""
+    lo = dt.datetime.combine(day, day_start).astimezone()
+    hi = dt.datetime.combine(day, day_end).astimezone()
+    if not_before and not_before > lo:
+        lo = not_before
+    if lo >= hi:
+        return []
+
+    # Merge overlapping meetings first: two back-to-back overlapping events
+    # would otherwise each carve a gap out of the other.
+    spans = []
+    for start, end, _title in sorted(busy, key=lambda b: b[0]):
+        start, end = max(start, lo), min(end, hi)
+        if end <= start:
+            continue
+        if spans and start <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], end)
+        else:
+            spans.append([start, end])
+
+    out, cursor = [], lo
+    for start, end in spans:
+        if start > cursor:
+            out.append((cursor, start))
+        cursor = max(cursor, end)
+    if cursor < hi:
+        out.append((cursor, hi))
+    return out
+
+
+def propose_session(days: dict[dt.date, list[dict]], plan: dict, now: dt.datetime,
+                    until: dt.date) -> dict:
+    """The first window from `now` to `until` long enough for a session.
+
+    Returns what was found AND what was in the way, because "Thursday is taken"
+    is the half that makes the suggestion trustworthy.
+    """
+    minutes = plan.get("session_minutes")
+    try:
+        minutes = max(15, min(8 * 60, int(minutes)))
+    except (TypeError, ValueError):
+        minutes = DEFAULT_SESSION_MINUTES
+    need = dt.timedelta(minutes=minutes)
+    day_start = _hhmm(plan.get("day_start"), DEFAULT_DAY_START)
+    day_end = _hhmm(plan.get("day_end"), DEFAULT_DAY_END)
+
+    day = now.date()
+    considered, blocked_today, unknown_seen = 0, [], []
+    while day <= until:
+        events = days.get(day)
+        if events is None:            # never scanned; do not claim it is free
+            day += dt.timedelta(days=1)
+            continue
+        considered += 1
+        busy, all_day, unknown = busy_intervals(events)
+        unknown_seen.extend(unknown)
+        if day == now.date():
+            blocked_today = busy
+        windows = free_windows(busy, day_start, day_end, day,
+                               not_before=now if day == now.date() else None)
+        for start, end in windows:
+            if end - start >= need:
+                return {"found": True, "start": start, "end": start + need,
+                        "minutes": minutes, "all_day": all_day,
+                        "clashes": [b for b in busy if b[0].date() == day],
+                        # Every day walked past, not just the one landed on: an
+                        # unknown-length event is why an earlier day was skipped,
+                        # and that is the half that makes this suggestion
+                        # trustworthy rather than mysterious.
+                        "unknown_length": list(unknown_seen),
+                        "days_scanned": considered}
+        day += dt.timedelta(days=1)
+    return {"found": False, "minutes": minutes, "all_day": [],
+            "clashes": blocked_today, "unknown_length": unknown_seen,
+            "days_scanned": considered}
 
 
 # ------------------------------------------------------------------- reading
@@ -293,6 +447,11 @@ def status(plan: dict, today: dt.date) -> dict:
         "block_state": block_state,
         "block": block,
         "start": start,
+        # Carried so the session placement, which runs after collection, does
+        # not have to read plan.json a second time.
+        "settings": {"session_minutes": plan.get("session_minutes", DEFAULT_SESSION_MINUTES),
+                     "day_start": plan.get("day_start", DEFAULT_DAY_START),
+                     "day_end": plan.get("day_end", DEFAULT_DAY_END)},
         "weekly": {
             "changes": changes,
             "week_of": filed,

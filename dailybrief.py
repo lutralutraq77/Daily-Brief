@@ -890,6 +890,21 @@ def compose_markdown(cfg: dict, today: dt.date, secs: dict, notices: list[str]) 
             elif state == "finished":
                 out.append(f"Block finished {blk['ended']:%d %b} — pick three new topics.")
 
+            ses = st.get("session")
+            if ses and state == "active":
+                if not ses.get("checked"):
+                    out.append(f"- *Session not placed — {ses['why']}.*")
+                elif ses.get("found"):
+                    out.append(f"- **Session {_session_when(ses['start'], ses['end'], today)}** "
+                               f"({ses['minutes']} min, free in your calendar).")
+                    if ses.get("caveat"):
+                        out.append(f"  - *{ses['caveat']}.*")
+                else:
+                    out.append(f"- **No free {ses['minutes']}-minute window** before "
+                               f"{ses['until']:%a %d %b}.")
+                    if ses.get("caveat"):
+                        out.append(f"  - *{ses['caveat']}.*")
+
             wk = st["weekly"]
             if wk["changes"]:
                 stale = " *(last week's — due for review)*" if wk["stale"] else ""
@@ -1053,6 +1068,14 @@ def _duration_text(start, end) -> str:
         return f"{mins} min"
     h, m = divmod(mins, 60)
     return f"{h} hr" if m == 0 else f"{h} hr {m:02d}"
+
+
+def _session_when(start: dt.datetime, end: dt.datetime, today: dt.date) -> str:
+    """'today 20:15-21:00' / 'tomorrow ...' / 'Thu 21 Aug ...'."""
+    day = start.date()
+    delta = (day - today).days
+    label = "today" if delta == 0 else ("tomorrow" if delta == 1 else f"{start:%a %d %b}")
+    return f"{label} {start:%H:%M}–{end:%H:%M}"
 
 
 def _sect(title: str) -> str:
@@ -1223,6 +1246,26 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
                 B.append(f'<p class="wx-cond"><strong>Block finished</strong> {blk["ended"]:%d %b}. '
                          f'Pick three new topics and set a new start date.</p>')
 
+            ses = st.get("session")
+            if ses and state == "active":
+                if not ses.get("checked"):
+                    B.append(f'<p class="unavail">Session not placed — {_esc(ses["why"])}.</p>')
+                elif ses.get("found"):
+                    when = _session_when(ses["start"], ses["end"], today)
+                    taken = ", ".join(f'{t} {s.astimezone():%H:%M}' for s, _e, t in ses["clashes"][:2])
+                    note = f' Around {_esc(taken)}.' if taken else ""
+                    if ses.get("all_day"):
+                        note += f' Note: {_esc(", ".join(ses["all_day"][:2]))} all day.'
+                    if ses.get("caveat"):
+                        note += f' <em>{_esc(ses["caveat"])}.</em>'
+                    B.append(f'<p class="wx-cond"><strong>Session {_esc(when)}</strong> '
+                             f'({ses["minutes"]} min, free in your calendar).{note}</p>')
+                else:
+                    tail = f' <em>{_esc(ses["caveat"])}.</em>' if ses.get("caveat") else ""
+                    B.append(f'<p class="wx-cond"><strong>No free {ses["minutes"]}-minute window'
+                             f'</strong> before {ses["until"]:%a %d %b}. '
+                             f'Something has to give — or shorten the session.{tail}</p>')
+
             wk = st["weekly"]
             if wk["changes"]:
                 rows = []
@@ -1390,6 +1433,76 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
     ))
 
 
+def attach_session(secs: dict, today: dt.date, now: dt.datetime | None = None) -> None:
+    """Place this week's 3x3 session in genuinely free calendar time.
+
+    Runs after collection rather than inside the collector because it needs the
+    calendar and the plan at once, and those are fetched in parallel.
+
+    The rule that matters: an unchecked calendar is never reported as a free
+    one. If no calendar is connected, or the fetch failed, or the week was
+    never expanded, the section says it could not check -- because "your
+    Thursday evening is free" is a claim, and claiming it from missing data is
+    exactly the double-booking this is meant to prevent.
+    """
+    import plan as P
+    import sources as S
+
+    tx = secs.get("threexthree")
+    if tx is None or not tx.usable or not isinstance(tx.data, dict):
+        return
+    st = tx.data
+    if st.get("block_state") != "active":
+        return
+
+    cal = secs.get("calendar")
+    detail = (cal.detail if cal is not None else None) or {}
+    if cal is None:
+        st["session"] = {"checked": False, "why": "the calendar section is switched off"}
+        return
+    if cal.status == S.FAILED or not detail.get("scanned"):
+        st["session"] = {"checked": False,
+                         "why": f"the calendar could not be read ({cal.reason[:60]})"
+                                if cal.reason else "the calendar could not be read"}
+        return
+    if not detail.get("horizon_days"):
+        st["session"] = {"checked": False, "why": "no calendar is connected — see calendars.txt"}
+        return
+
+    now = now or dt.datetime.now().astimezone()
+    days = {today: list(cal.data) if cal.usable else []}
+    for day, evs in (detail.get("ahead") or {}).items():
+        days[day] = list(evs)
+
+    # Only up to the day before the next review, since the week's job rolls
+    # over then; and never past what the calendar was actually asked for.
+    this_week = st["weekly"]["this_week"]
+    until = min(this_week + dt.timedelta(days=6),
+                today + dt.timedelta(days=int(detail["horizon_days"])))
+    found = P.propose_session(days, st.get("settings") or {}, now, until)
+    found["checked"] = True
+    found["until"] = until
+    # Everything that could make this proposal wrong, said out loud. A slot is
+    # still offered -- refusing to suggest anything is not more honest -- but
+    # never as a bare claim when the data behind it is doubtful.
+    caveats = []
+    suspect = detail.get("suspect") or []
+    if suspect:
+        # A wrong URL that still returns a valid, empty calendar reads as a
+        # gloriously free week.
+        caveats.append(f"{', '.join(suspect[:2])} returned no events at all — "
+                       f"if that is wrong, so is this")
+    if detail.get("stale"):
+        caveats.append("working from a cached calendar, so a booking made since "
+                       "may be missing")
+    if found.get("unknown_length"):
+        caveats.append(f"{', '.join(found['unknown_length'][:2])} has no usable end time, "
+                       f"so the rest of that day is treated as busy")
+    if caveats:
+        found["caveat"] = "; ".join(caveats)
+    st["session"] = found
+
+
 def collect_sections(cfg: dict, today: dt.date) -> tuple[dict, list[str]]:
     """Fetch everything, plus any whole-run warnings worth a banner."""
     import netlib
@@ -1408,6 +1521,9 @@ def collect_sections(cfg: dict, today: dt.date) -> tuple[dict, list[str]]:
         # take away -- and the one most worth seeing on a morning with no feeds.
         if "threexthree" in (cfg.get("sections") or []):
             offline["threexthree"] = S.threexthree(today, BASE / "plan.json")
+            # Says "could not check" rather than proposing a slot: offline, the
+            # calendar is exactly the thing we cannot see.
+            attach_session(offline, today)
         return offline, notices
 
     # Only after we know the network is usable: a hand-edited city or postcode
@@ -1421,6 +1537,7 @@ def collect_sections(cfg: dict, today: dt.date) -> tuple[dict, list[str]]:
     # cache next to sources.py, which stops being the data directory the moment
     # the code and the user's files are not in the same place.
     secs = S.collect(cfg, today, int(cfg.get("deadline_seconds", 90)), base_dir=BASE)
+    attach_session(secs, today)
 
     skew = netlib.clock_skew_minutes()
     if skew is not None and skew > 10:
@@ -2191,6 +2308,15 @@ def _plan_lines(st: dict, today: dt.date) -> list[str]:
                          + (f"   [{label}]" if not src else ""))
         mark = "produced" if blk["output_done"] else f"due by {blk['month_end']:%a %d %b}"
         lines.append(f"  {'->' if blk['due'] == 'output' else '  '} output {mark}")
+        ses = st.get("session")
+        if ses and not ses.get("checked"):
+            lines.append(f"  session not placed: {ses['why']}")
+        elif ses and ses.get("found"):
+            lines.append(f"  session {_session_when(ses['start'], ses['end'], today)}"
+                         f"  ({ses['minutes']} min, free)")
+        elif ses:
+            lines.append(f"  no free {ses['minutes']}-min window before "
+                         f"{ses['until']:%a %d %b}")
     elif state == "not_started":
         lines.append(f"Block starts {blk['starts']:%a %d %b} ({blk['topic_count']} topics).")
     elif state == "finished":
@@ -2264,7 +2390,19 @@ def cmd_threexthree(args) -> int:
         if not PLAN_PATH.exists():
             print("No plan.json yet. Run `dailybrief.py 3x3 init`.")
             return 1
-        for line in _plan_lines(P.status(plan, today), today):
+        st = P.status(plan, today)
+        if st.get("block_state") == "active":
+            # Costs one calendar fetch, so `3x3 status` answers the same
+            # question the morning brief does rather than a staler version.
+            import sources as S
+
+            secs = {"threexthree": S.Section("threexthree", S.OK, data=st)}
+            try:
+                secs["calendar"] = S.calendar(load_config(), today, BASE, horizon_days=7)
+            except Exception as exc:  # noqa: BLE001 - status must still print
+                secs["calendar"] = S.Section("calendar", S.FAILED, reason=str(exc))
+            attach_session(secs, today)
+        for line in _plan_lines(st, today):
             print(line)
         return 0
 

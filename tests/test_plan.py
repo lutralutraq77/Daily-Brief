@@ -315,6 +315,214 @@ check("changes with no week_of are not stale", nodate["weekly"]["stale"] is Fals
 check("the CLI echo survives a null week_of",
       "no filing date" in "\n".join(db._plan_lines(nodate, dt.date(2026, 9, 9))))
 
+# --- free time and session placement ----------------------------------------
+
+def ev(day, h1, m1, h2, m2, title="Busy", all_day=False):
+    if all_day:
+        return {"all_day": True, "summary": title, "start": None, "end": None}
+    return {"all_day": False, "summary": title,
+            "start": dt.datetime.combine(day, dt.time(h1, m1)).astimezone(),
+            "end": dt.datetime.combine(day, dt.time(h2, m2)).astimezone()}
+
+D1 = dt.date(2026, 9, 9)
+D2 = dt.date(2026, 9, 10)
+NOW = dt.datetime.combine(D1, dt.time(8, 0)).astimezone()
+SETTINGS = {"session_minutes": 45, "day_start": "08:00", "day_end": "22:00"}
+
+busy, allday, unknown = P.busy_intervals([ev(D1, 9, 0, 10, 0), ev(D1, 0, 0, 0, 0, "Birthday", True)])
+check("timed events become busy intervals", len(busy) == 1)
+check("all-day events do not block time", busy[0][2] == "Busy" and allday == ["Birthday"])
+check("a normal event has a known length", unknown == [])
+
+# icslib returns end=None for TWO reasons and they must never be conflated.
+# No DTEND at all is a genuine zero-length instant...
+inst = {"all_day": False, "summary": "Ping",
+        "start": dt.datetime.combine(D1, dt.time(9, 0)).astimezone(), "end": None}
+b, _a, u = P.busy_intervals([inst])
+check("no DTEND at all stays a zero-length instant", b[0][0] == b[0][1] and u == [])
+check("an instant leaves the day free",
+      len(P.free_windows(b, dt.time(8, 0), dt.time(22, 0), D1)) == 1)
+
+# ...but a DTEND that icslib parsed and DROPPED means the length is unknown, and
+# treating that as an instant offers a slot inside a 14-hour workshop.
+for marker in ({"end_unknown": True}, {"warnings": ["unresolved end timezone X — end dropped"]}):
+    dropped = {"all_day": False, "summary": "Client workshop", "end": None,
+               "start": dt.datetime.combine(D1, dt.time(8, 0)).astimezone(), **marker}
+    b, _a, u = P.busy_intervals([dropped])
+    tag = "flag" if "end_unknown" in marker else "warning fallback"
+    check(f"a dropped end is not an instant ({tag})", b[0][1] > b[0][0] and u == ["Client workshop"])
+    check(f"a dropped end blocks the rest of the day ({tag})",
+          P.free_windows(b, dt.time(8, 0), dt.time(22, 0), D1) == [])
+    s = P.propose_session({D1: [dropped]}, SETTINGS,
+                          dt.datetime.combine(D1, dt.time(8, 0)).astimezone(), D1)
+    check(f"no session is offered inside an unknown-length event ({tag})", s["found"] is False)
+    check(f"the unknown-length event is named ({tag})", s["unknown_length"] == ["Client workshop"])
+
+w = P.free_windows(busy, dt.time(8, 0), dt.time(22, 0), D1)
+check("free windows bracket a meeting", len(w) == 2)
+check("the first window ends at the meeting", w[0][1].hour == 9)
+check("the second window starts after it", w[1][0].hour == 10)
+
+# Overlapping meetings must merge, or each carves a phantom gap from the other.
+ov, _a, _u = P.busy_intervals([ev(D1, 9, 0, 11, 0), ev(D1, 10, 0, 12, 0)])
+w = P.free_windows(ov, dt.time(8, 0), dt.time(22, 0), D1)
+check("overlapping meetings merge into one block", len(w) == 2)
+check("the merged block ends at the later end", w[1][0].hour == 12)
+
+# A full day yields nothing, and must not fall back to "free".
+full, _a, _u = P.busy_intervals([ev(D1, 8, 0, 22, 0, "All-day workshop")])
+check("a fully booked day has no windows",
+      P.free_windows(full, dt.time(8, 0), dt.time(22, 0), D1) == [])
+
+s = P.propose_session({D1: [ev(D1, 9, 0, 10, 0)]}, SETTINGS, NOW, D1)
+check("a session is placed in the first free gap", s["found"] and s["start"].hour == 8)
+check("the session is exactly session_minutes long",
+      (s["end"] - s["start"]) == dt.timedelta(minutes=45))
+
+# Not before "now": a slot earlier today has already gone.
+late = dt.datetime.combine(D1, dt.time(20, 30)).astimezone()
+s = P.propose_session({D1: [ev(D1, 9, 0, 10, 0)]}, SETTINGS, late, D1)
+check("a session is never proposed in the past", s["found"] and s["start"] >= late)
+check("a session stays inside day_end", s["end"].time() <= dt.time(22, 0))
+
+# Today full, tomorrow free -> roll to tomorrow rather than give up.
+s = P.propose_session({D1: [ev(D1, 8, 0, 22, 0)], D2: []}, SETTINGS, NOW, D2)
+check("a full day rolls to the next", s["found"] and s["start"].date() == D2)
+check("the day it landed on reports its own clashes",
+      all(c[0].date() == s["start"].date() for c in s["clashes"]))
+
+# Nothing free anywhere in range -> found False, never a fabricated slot.
+s = P.propose_session({D1: [ev(D1, 8, 0, 22, 0)], D2: [ev(D2, 8, 0, 22, 0)]}, SETTINGS, NOW, D2)
+check("no free window is reported honestly", s["found"] is False)
+check("a failed search still reports the length wanted", s["minutes"] == 45)
+
+# A day that was never scanned must not be treated as free.
+s = P.propose_session({D1: [ev(D1, 8, 0, 22, 0)]}, SETTINGS, NOW, D2)
+check("an unscanned day is not claimed free", s["found"] is False)
+check("only scanned days are counted", s["days_scanned"] == 1)
+
+check("a bad session_minutes falls back to the default",
+      P.propose_session({D1: []}, {"session_minutes": "soon"}, NOW, D1)["minutes"] == 45)
+check("a bad day_start does not raise",
+      P.propose_session({D1: []}, {"day_start": "nope"}, NOW, D1)["found"] is True)
+
+# An event running past midnight is returned on BOTH days by icslib, carrying its
+# original start/end. On the second day it must still block the morning, or a
+# night shift ending at 11:00 reads as a free 08:00.
+_night = {"all_day": False, "summary": "Night shift",
+          "start": dt.datetime.combine(D1, dt.time(23, 0)).astimezone(),
+          "end": dt.datetime.combine(D2, dt.time(11, 0)).astimezone()}
+_b, _a, _u = P.busy_intervals([_night])
+_w = P.free_windows(_b, dt.time(8, 0), dt.time(22, 0), D2)
+check("an overnight event blocks the next morning", _w and _w[0][0].hour == 11)
+check("and leaves the rest of that day free", _w[0][1].hour == 22)
+_s = P.propose_session({D2: [_night]}, SETTINGS,
+                       dt.datetime.combine(D2, dt.time(8, 0)).astimezone(), D2)
+check("no session is proposed inside an overnight event",
+      _s["found"] and _s["start"].hour == 11)
+
+# A window must anchor to the target day's OWN utc offset, not today's, or every
+# boundary shifts by an hour across a DST change and the whole comparison is
+# wrong for that week. Written offset-agnostically so it holds in any timezone.
+for _d in (dt.date(2026, 10, 24), dt.date(2026, 10, 26), dt.date(2026, 3, 28)):
+    _w = P.free_windows([], dt.time(8, 0), dt.time(22, 0), _d)
+    _want = dt.datetime.combine(_d, dt.time(8, 0)).astimezone()
+    check(f"window on {_d} uses that day's own offset",
+          _w and _w[0][0] == _want and _w[0][0].utcoffset() == _want.utcoffset())
+
+# An event in a different timezone from the machine must still line up.
+_far = {"all_day": False, "summary": "Remote call",
+        "start": dt.datetime(2026, 9, 9, 14, 0, tzinfo=dt.timezone(dt.timedelta(hours=9))),
+        "end": dt.datetime(2026, 9, 9, 15, 0, tzinfo=dt.timezone(dt.timedelta(hours=9)))}
+_b, _a, _u = P.busy_intervals([_far])
+check("a foreign-timezone event is converted to local",
+      _b[0][0] == _far["start"].astimezone() and _b[0][0].utcoffset() is not None)
+
+# --- attach_session: never call an unchecked calendar free -------------------
+
+def attached(cal_section):
+    st = P.status(plan_with(), D1)
+    secs = {"threexthree": S.Section("threexthree", S.OK, data=st)}
+    if cal_section is not None:
+        secs["calendar"] = cal_section
+    db.attach_session(secs, D1, now=NOW)
+    return st.get("session")
+
+s = attached(None)
+check("no calendar section means not checked", s and s["checked"] is False)
+s = attached(S.Section("calendar", S.EMPTY, reason="no calendars configured — see calendars.txt",
+                       detail={"checked": 0}))
+check("an unconfigured calendar is not checked", s["checked"] is False)
+check("it says a calendar is missing", "calendars.txt" in s["why"])
+s = attached(S.Section("calendar", S.FAILED, reason="HTTP 500"))
+check("a failed calendar is not checked", s["checked"] is False)
+check("the failure reason is carried", "could not be read" in s["why"])
+s = attached(S.Section("calendar", S.EMPTY, reason="nothing scheduled",
+                       detail={"checked": 1, "ahead": {D2: []}, "horizon_days": 7, "scanned": True}))
+check("an empty but scanned calendar does place a session", s["checked"] and s["found"])
+s = attached(S.Section("calendar", S.OK, data=[ev(D1, 8, 0, 22, 0)],
+                       detail={"checked": 1, "ahead": {D2: [ev(D2, 8, 0, 22, 0)]},
+                               "horizon_days": 7, "scanned": True}))
+check("a booked-out week reports no window", s["checked"] and s["found"] is False)
+
+# A feed that parses but holds nothing is very likely a wrong URL, and would
+# otherwise read as a gloriously free week.
+s = attached(S.Section("calendar", S.EMPTY, reason="feed contains no events at all",
+                       detail={"checked": 1, "ahead": {D2: []}, "horizon_days": 7,
+                               "scanned": True, "suspect": ["Work"]}))
+check("an empty feed still places a session", s["found"])
+check("but the session is qualified", "no events at all" in (s.get("caveat") or ""))
+check("the suspect calendar is named", "Work" in (s.get("caveat") or ""))
+s = attached(S.Section("calendar", S.OK, data=[ev(D1, 9, 0, 10, 0)],
+                       detail={"checked": 1, "ahead": {D2: []}, "horizon_days": 7,
+                               "scanned": True, "suspect": []}))
+check("a healthy calendar carries no caveat", s.get("caveat") is None)
+
+# An unknown-length event on a SKIPPED day must still be named, or Thursday is
+# mysteriously unavailable and the suggestion looks arbitrary.
+_drop = {"all_day": False, "summary": "Client workshop", "end": None, "end_unknown": True,
+         "start": dt.datetime.combine(D1, dt.time(8, 0)).astimezone()}
+_s = P.propose_session({D1: [_drop], D2: []}, SETTINGS,
+                       dt.datetime.combine(D1, dt.time(8, 0)).astimezone(), D2)
+check("the session rolls past an unknown-length day", _s["found"] and _s["start"].date() == D2)
+check("the skipped day's event is still named", _s["unknown_length"] == ["Client workshop"])
+
+# The caveat must reach BOTH renderers, not just the HTML one.
+_st = P.status(plan_with(), D1)
+_secs = {"threexthree": S.Section("threexthree", S.OK, data=_st),
+         "calendar": S.Section("calendar", S.OK, data=[_drop],
+                               detail={"checked": 1, "ahead": {D2: []}, "horizon_days": 7,
+                                       "scanned": True, "suspect": [], "stale": []})}
+db.attach_session(_secs, D1, now=dt.datetime.combine(D1, dt.time(8, 0)).astimezone())
+_CFG = {"sections": ["threexthree"], "units": {}, "location": {}, "feeds": []}
+check("the caveat reaches the markdown brief",
+      "no usable end time" in db.compose_markdown(_CFG, D1, _secs, []))
+check("the caveat reaches the html brief",
+      "no usable end time" in db.compose_page(_CFG, D1, _secs, [], {}, ""))
+
+# A stale (cached) calendar is a reason to doubt a proposal, and must say so.
+_secs2 = {"threexthree": S.Section("threexthree", S.OK, data=P.status(plan_with(), D1)),
+          "calendar": S.Section("calendar", S.OK, data=[],
+                                detail={"checked": 1, "ahead": {D2: []}, "horizon_days": 7,
+                                        "scanned": True, "suspect": [],
+                                        "stale": ["Work: cache 2h old"]})}
+db.attach_session(_secs2, D1, now=dt.datetime.combine(D1, dt.time(8, 0)).astimezone())
+check("a cached calendar qualifies the proposal",
+      "cached calendar" in (_secs2["threexthree"].data["session"].get("caveat") or ""))
+
+# The horizon stops the day BEFORE the next review, since the week's job rolls
+# over then -- including when today IS the review day.
+for _today, _label in ((dt.date(2026, 9, 9), "mid-week"), (dt.date(2026, 9, 13), "on review day")):
+    _stt = P.status(plan_with(), _today)
+    _sec = {"threexthree": S.Section("threexthree", S.OK, data=_stt),
+            "calendar": S.Section("calendar", S.OK, data=[],
+                                  detail={"checked": 1, "ahead": {}, "horizon_days": 7,
+                                          "scanned": True, "suspect": [], "stale": []})}
+    db.attach_session(_sec, _today, now=dt.datetime.combine(_today, dt.time(9, 0)).astimezone())
+    _u = _stt["session"]["until"]
+    check(f"horizon ends the day before the next review ({_label})",
+          _u == _stt["weekly"]["this_week"] + dt.timedelta(days=6))
+
 # --- the collector ----------------------------------------------------------
 
 sec = S.threexthree(dt.date(2026, 9, 3), TMP / "nope.json")

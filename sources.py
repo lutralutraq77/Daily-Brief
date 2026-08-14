@@ -683,8 +683,15 @@ def _load_calendar_body(target: str, cache_dir) -> tuple[str, str]:
         raise
 
 
-def calendar(cfg: dict, today: dt.date, base_dir) -> Section:
-    """Today's events across every configured calendar."""
+def calendar(cfg: dict, today: dt.date, base_dir, horizon_days: int = 0) -> Section:
+    """Today's events across every configured calendar.
+
+    `horizon_days` additionally expands the following N days into
+    `detail["ahead"]`, so the 3x3 section can place a session in genuinely free
+    time. It rides on this fetch deliberately: the feed is already downloaded
+    and parsed here, and a second collector asking the same URL for the same
+    week would double both.
+    """
     import icslib
 
     started = _now_ms()
@@ -696,6 +703,8 @@ def calendar(cfg: dict, today: dt.date, base_dir) -> Section:
 
     my_emails = {e.lower() for e in (cfg.get("calendar_emails") or []) if e}
     events, notes, failures, stale = [], [], [], []
+    ahead: dict[dt.date, list[dict]] = {}
+    suspect: list[str] = []
 
     for src in sources:
         name = src["label"] or "calendar"
@@ -707,7 +716,20 @@ def calendar(cfg: dict, today: dt.date, base_dir) -> Section:
         if provenance.startswith("cache"):
             stale.append(f"{name}: {provenance}")
         try:
-            got = icslib.events_on(text, today, my_emails)
+            if horizon_days > 0:
+                span = icslib.events_between(
+                    text, today, today + dt.timedelta(days=horizon_days), my_emails)
+                by_day = span["by_day"]
+                got = {"events": by_day[today], "total_events": span["total_events"],
+                       "problems": span["problems"]}
+                for day, evs in by_day.items():
+                    if day == today:
+                        continue
+                    for ev in evs:
+                        ev["calendar"] = src["label"]
+                    ahead.setdefault(day, []).extend(evs)
+            else:
+                got = icslib.events_on(text, today, my_emails)
         except icslib.IcsError as exc:
             failures.append(f"{name}: {netlib.scrub(str(exc))}")
             continue
@@ -718,19 +740,28 @@ def calendar(cfg: dict, today: dt.date, base_dir) -> Section:
             notes.append(f"{name}: {len(got['problems'])} event(s) unparseable")
         if got["total_events"] == 0:
             notes.append(f"{name}: feed contains no events at all — check the URL")
+            # A wrong URL that still returns a valid, empty calendar is the worst
+            # kind of failure here: it looks like a clear week. Recorded so the
+            # 3x3 can qualify a session it placed on the strength of it.
+            suspect.append(name)
 
     events.sort(key=lambda e: (not e["all_day"],
                                e["start"] or dt.datetime.min.replace(tzinfo=dt.timezone.utc)))
     reason = "; ".join(failures + stale + notes)
 
+    # `horizon_days` travels with the result so a consumer can tell "the week is
+    # genuinely free" from "nobody ever looked at the week". Treating those two
+    # alike is how you get told an evening is clear when it was never checked.
+    detail = {"checked": len(sources), "ahead": ahead, "horizon_days": horizon_days,
+              "scanned": not failures, "suspect": suspect, "stale": list(stale)}
     if failures and not events:
         return Section("calendar", FAILED, reason=reason, elapsed_ms=_since(started))
     if not events:
         # "Nothing scheduled" and "the fetch died" must never look the same.
         return Section("calendar", EMPTY, reason=reason or "nothing scheduled",
-                       detail={"checked": len(sources)}, elapsed_ms=_since(started))
+                       detail=detail, elapsed_ms=_since(started))
     return Section("calendar", OK, data=events, reason=reason,
-                   detail={"checked": len(sources)}, elapsed_ms=_since(started))
+                   detail=detail, elapsed_ms=_since(started))
 
 
 def bank_holiday(today: dt.date, division: str = "england-and-wales", within_days: int = 10) -> Section:
@@ -825,7 +856,10 @@ def collect(cfg: dict, today: dt.date, deadline_s: int = 90, base_dir=None) -> d
     base = pathlib.Path(base_dir) if base_dir else pathlib.Path(__file__).resolve().parent
     jobs: dict[str, Callable[[], Section]] = {}
     if "calendar" in enabled:
-        jobs["calendar"] = lambda: calendar(cfg, today, base)
+        # A week ahead only when the 3x3 needs it to place a session; otherwise
+        # the calendar section expands one day, exactly as it always has.
+        horizon = 7 if "threexthree" in enabled else 0
+        jobs["calendar"] = lambda: calendar(cfg, today, base, horizon_days=horizon)
     if "weather" in enabled and lat is not None and lon is not None:
         jobs["weather"] = lambda: weather(lat, lon, today, units)
 

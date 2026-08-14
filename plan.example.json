@@ -7,6 +7,11 @@
   "_review_day": "The day the weekly review falls on: monday ... sunday. The brief nags on this day, and keeps nagging while a stale set is still showing.",
   "review_day": "sunday",
 
+  "_session": "How the brief places this week's session. It scans your real calendar from now to the day before the next review, and offers the first gap at least session_minutes long inside day_start..day_end. It only ever proposes time that is genuinely free; if no calendar is connected, or the fetch failed, it says it could not check rather than calling an unchecked evening free. All-day events do not block the day (most are labels, not commitments) but are named alongside the proposal.",
+  "session_minutes": 45,
+  "day_start": "08:00",
+  "day_end": "22:00",
+
   "_topics": "Three topics, one per month -- e.g. \"Psychoacoustics\", \"Ottoman history\", \"Bread fermentation\"; make at least one unrelated to your work, which is where being interesting about the unexpected comes from. Each has three sources: video (a lecture or talk), text (an article, book or long-form journalism), misc (a course, a series, anything). Week 1 is the video, week 2 the text, week 3 the misc, week 4 is producing the output. Names and sources are left blank on purpose: an empty slot is reported as empty, and the brief will never show a topic you did not choose.",
   "topics": [
     {

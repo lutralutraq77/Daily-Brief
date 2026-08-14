@@ -1,0 +1,92 @@
+{
+  "engine": "local",
+  "location": {
+    "city": "",
+    "postcode": "",
+    "country": "",
+    "latitude": null,
+    "longitude": null,
+    "label": "",
+    "resolved_from": ""
+  },
+  "units": {
+    "temperature": "celsius",
+    "wind": "mph",
+    "precipitation": "mm",
+    "clock": "24h"
+  },
+  "sections": [
+    "calendar",
+    "weather",
+    "news",
+    "tech",
+    "onthisday",
+    "bankholiday",
+    "audio",
+    "paper",
+    "featured"
+  ],
+  "feeds": [
+    {
+      "section": "news",
+      "max_items": 2,
+      "max_age_hours": 24,
+      "enabled": true,
+      "name": "BBC",
+      "url": "https://feeds.bbci.co.uk/news/rss.xml"
+    },
+    {
+      "section": "news",
+      "max_items": 2,
+      "max_age_hours": 24,
+      "enabled": true,
+      "name": "Guardian",
+      "url": "https://www.theguardian.com/uk/rss"
+    },
+    {
+      "section": "audio",
+      "max_items": 2,
+      "max_age_hours": 168,
+      "enabled": true,
+      "name": "CDM",
+      "url": "https://cdm.link/feed/"
+    }
+  ],
+  "section_titles": {},
+  "tech_items": 2,
+  "tech_min_points": 100,
+  "bank_holiday_division": "england-and-wales",
+  "deadline_seconds": 90,
+  "claude_path": "auto",
+  "model": "sonnet",
+  "prompt_file": "prompt.md",
+  "tools": [],
+  "add_dirs": [],
+  "timeout_seconds": 900,
+  "max_budget_usd": 1.0,
+  "extra_args": [],
+  "toast": true,
+  "auto_open": false,
+  "keep_days": 60,
+  "browser": "auto",
+  "window_size": "1040,1120",
+  "_comment": "Settings for dailybrief.py. Edit and save -- changes take effect on the next run.",
+  "_engine": "local = keyless APIs only, no credentials, no cost (default). claude = same data, but Claude writes the prose (needs a signed-in CLI or ANTHROPIC_API_KEY). auto = claude if a credential exists, else local.",
+  "_location": "Set EITHER city (with country to disambiguate) OR postcode. Edit one and the coordinates re-resolve automatically on the next run. To pin exact coordinates instead, clear city and postcode and set latitude/longitude yourself. `label` and `resolved_from` are written by the program -- do not edit them by hand.",
+  "_units": "temperature: celsius | fahrenheit. wind: mph | kmh | ms | kn. precipitation: mm | inch. clock: 24h | 12h. Anything unrecognised falls back to metric.",
+  "_bank_holiday_division": "Set automatically from your location: england-and-wales | scotland | northern-ireland. Scotland's calendar genuinely differs.",
+  "_sections": "Which sections render. Built-ins: weather, tech, onthisday, bankholiday. Any other name here is a feed section drawn from `feeds` below. `sources add` keeps this in step for you.",
+  "_feeds": "Manage with `dailybrief.py sources list|add|edit|remove|enable|disable|test` -- `add` fetches and parses the feed before saving, so a dead source cannot be added silently. Editing by hand works too. Each entry: name, url, section (the heading it appears under), max_items, max_age_hours (items older than this are ignored), enabled. Reuters and AP RSS are DEAD; CNN returns 200 but has been frozen since 2023.",
+  "_section_titles": "Override a section heading, e.g. {\"audio\": \"Audio & DSP\"}. Sensible defaults exist for news, tech, audio, sport, science and local.",
+  "_browser": "\"auto\" picks Edge/Chrome for a chromeless app window; \"default\" uses your default browser; or give a full path to an exe.",
+  "_claude": "Only used when engine is claude/auto. Tools are empty because the data is already fetched -- Claude writes, it does not research.",
+  "calendar_emails": [],
+  "paper_categories": [
+    "eess.AS",
+    "cs.SD"
+  ],
+  "featured_feed": {
+    "name": "Long Read",
+    "url": "https://www.theguardian.com/news/series/the-long-read/rss"
+  }
+}

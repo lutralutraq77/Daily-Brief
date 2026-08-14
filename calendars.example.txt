@@ -1,0 +1,49 @@
+# ============================================================================
+#  CALENDARS  --  one per line.  This file is SEPARATE from config.json on
+#  purpose: each URL below is a bearer token. Anyone who has it can read every
+#  detail of that calendar, forever, without signing in. Do not paste this file
+#  into a chat, a screenshot, or a support thread.
+# ============================================================================
+#
+#  HOW TO GET THE URL (desktop web only -- the phone apps do not show it):
+#
+#    1. Open calendar.google.com, signed in.
+#    2. Click the gear icon (top right) -> Settings.
+#    3. In the LEFT panel under "Settings for my calendars", click the name of
+#       the calendar you want. (Not "Settings for other calendars" -- calendars
+#       you merely subscribe to have no secret address you can use.)
+#    4. Click "Integrate calendar".
+#    5. Copy the value under "Secret address in iCal format".
+#       It looks like:
+#         https://calendar.google.com/calendar/ical/you%40gmail.com/private-<32 hex chars>/basic.ics
+#    6. Paste it below, on its own line.
+#
+#  Careful: the "Reset" button sits right next to the copy button, and resetting
+#  is irreversible -- it breaks this feed and every other consumer of it.
+#
+#  ONE URL = ONE CALENDAR. It is not your whole account. To include work and
+#  personal, repeat steps 3-5 for each and add a line per calendar.
+#
+#  If the "Secret address in iCal format" row is missing entirely, a Workspace
+#  admin has disabled external sharing, and no ICS URL exists to be had.
+#
+#  Paste the URL EXACTLY as copied. Never decode the %23 in a Google-generated
+#  calendar id -- an unencoded '#' returns HTTP 404.
+#
+#  ---------------------------------------------------------------------------
+#  FORMAT
+#    https://calendar.google.com/calendar/ical/.../basic.ics
+#    Work = https://calendar.google.com/calendar/ical/.../basic.ics
+#    Personal = C:\Users\<you>\Documents\exported.ics
+#
+#  An optional "Label = " prefix is shown beside each event in the brief.
+#  A plain file path works too, if you would rather export an .ics by hand and
+#  keep the whole thing offline -- no URL, no token, no network.
+#
+#  Then, so declined invitations are not shown as if you were going, put your
+#  own address(es) in config.json:  "calendar_emails": ["you@gmail.com"]
+#
+#  Check it worked:   python dailybrief.py calendar
+#  ---------------------------------------------------------------------------
+
+# Add your calendar URL below this line.

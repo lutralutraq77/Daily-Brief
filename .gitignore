@@ -1,0 +1,26 @@
+# --- personal runtime output: never commit ---
+briefs/
+logs/
+cache/
+workspace/
+state.json
+
+# --- live configuration: ships as .example files instead ---
+# calendars.txt holds a Google secret iCal URL, which is a permanent bearer
+# token granting read of the whole calendar. It must never be tracked.
+calendars.txt
+config.json
+
+# --- local scratch ---
+sample-preview.html
+tests/render_test.html
+*.testbak
+*.bak
+
+# --- build artefacts ---
+__pycache__/
+*.py[cod]
+
+# --- generated icons (rebuild with: python dailybrief.py icon) ---
+icon.png
+icon.ico

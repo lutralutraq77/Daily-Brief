@@ -21,9 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 // Article, CalendarMonth and GridView need no import: they are vendored in
-// Icons.kt, in this same package. Place comes from material-icons-core, which
-// material3 already puts on the classpath.
+// Icons.kt, in this same package. Place and Refresh come from
+// material-icons-core, which material3 already puts on the classpath.
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -172,9 +173,15 @@ private fun RootScreen() {
                             Icon(Icons.Default.Place, contentDescription = "Change location")
                         }
                     }
-                    // No refresh action here: the brief renders its own Refresh
-                    // control, so a second one in the app bar was a duplicate of
-                    // the same generate() call sitting a few pixels above it.
+                    // This is the refresh that works. The in-page one was an
+                    // <a href="dailybrief:refresh"> relying on the protocol
+                    // handler firing from inside the WebView, which did not
+                    // reliably regenerate; this calls generate() directly. The
+                    // page-level bar is omitted on Android so there is exactly
+                    // one refresh on screen.
+                    IconButton(onClick = { generate() }, enabled = !running) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Generate now")
+                    }
                 },
             )
         },

@@ -504,10 +504,31 @@ def markdown_to_html(md: str) -> str:
 # (project a4819508, a cherry-red retheme of the Nocturne design system).
 # Canvas artifacts from the design tool -- absolute positioning, fixed pixel
 # widths on text -- are deliberately not ported; the token values are verbatim.
-# The Android shell already shows "Daily Brief · <city>" in its own app bar, so
-# repeating the brand inside the page put the same words twice on one screen and
-# pushed the date down. Desktop has no such chrome and still needs it.
-BRAND_HTML = "" if platform_shim.PLATFORM == "android" else '<span class="brand">Daily brief</span>'
+# The whole in-page top bar is desktop-only.
+#
+# On Android the app's own chrome already carries both halves of it: the app bar
+# reads "Daily Brief · <city>" and holds the refresh action. Worse, the in-page
+# Refresh is an <a href="dailybrief:refresh">, which depends on the protocol
+# handler firing from inside a WebView -- that is the one that did not reliably
+# regenerate anything, while the app-bar button calls generate() directly. So on
+# Android the bar is dropped entirely rather than left empty, which also returns
+# its vertical space to the brief.
+#
+# Desktop has no app chrome at all: the page IS the window, so it keeps both.
+_BRAND_HTML = '<span class="brand">Daily brief</span>'
+_REFRESH_HTML = (
+    '<a class="btn" id="refresh" href="dailybrief:refresh" target="_self" '
+    'title="Regenerate today\'s brief">'
+    '<svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="18" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M224 128a96 96 0 1 1-28-68"/><path d="M196 24v40h-40"/></svg>'
+    "Refresh</a>"
+)
+TOPBAR_HTML = (
+    ""
+    if platform_shim.PLATFORM == "android"
+    else f'<div class="topbar">{_BRAND_HTML}{_REFRESH_HTML}</div>'
+)
 
 PAGE = """<!doctype html>
 <meta charset="utf-8">
@@ -697,13 +718,7 @@ a.feature-title:hover {{ color: var(--color-accent-300); text-decoration: underl
   .brief {{ margin-left: 0; }}
 }}
 </style>
-<div class="topbar">
-  {brand}
-  <a class="btn" id="refresh" href="dailybrief:refresh" target="_self" title="Regenerate today's brief">
-    <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"><path d="M224 128a96 96 0 1 1-28-68"/><path d="M196 24v40h-40"/></svg>
-    Refresh
-  </a>
-</div>
+{topbar}
 <main class="brief">
   <header>
     <h1>{heading}</h1>
@@ -761,7 +776,7 @@ def render_page(*, heading: str, lede: str, body_html: str, meta_bits: list[str]
     meta = " · ".join(htmllib.escape(b) for b in [*meta_bits, footer] if b)
     foot = (f'<div class="foot"><span class="dot"></span><span>{meta}</span></div>' if meta else "")
     return PAGE.format(
-        brand=BRAND_HTML,
+        topbar=TOPBAR_HTML,
         title=htmllib.escape(f"Daily Brief - {heading}"),
         heading=htmllib.escape(heading),
         lede=lede_html,
@@ -1486,7 +1501,7 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
     heading = today.strftime("%A %d %B")
     lede_html = f'<p class="lede">{_esc(tldr)}</p>' if tldr else ""
     return netlib.scrub(PAGE.format(
-        brand=BRAND_HTML,
+        topbar=TOPBAR_HTML,
         title=_esc(f"Daily Brief - {heading}"),
         heading=_esc(heading),
         lede=lede_html,

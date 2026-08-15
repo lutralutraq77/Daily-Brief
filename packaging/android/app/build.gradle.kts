@@ -57,8 +57,8 @@ android {
         targetSdk = 35
         // versionCode must increase or Android refuses to install the new APK
         // over the old one -- it is the only field the installer compares.
-        versionCode = 2
-        versionName = "1.2.0"
+        versionCode = 3
+        versionName = "1.3.0"
 
         // ABIs are declared per flavour below, not here.
     }

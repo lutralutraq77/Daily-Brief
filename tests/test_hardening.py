@@ -118,7 +118,12 @@ secs = {
     "tech": S.Section("tech", S.EMPTY, reason="nothing above 100 points"),
     "onthisday": S.Section("onthisday", S.OK, data={"year": 1940, "text": "Something happened."}),
 }
-md = db.compose_markdown({"tech_items": 2}, today, secs, ["System clock is 45 min off server time"])
+# The feeds are stated explicitly rather than relying on whatever DEFAULT_FEEDS
+# happens to ship: this test is about how a FAILED section renders, not about
+# which sources are configured by default.
+_news_cfg = {"tech_items": 2,
+             "feeds": [{"name": "BBC", "url": "https://x.tld/rss", "section": "news"}]}
+md = db.compose_markdown(_news_cfg, today, secs, ["System clock is 45 min off server time"])
 check("failed weather is stated", "Weather unavailable" in md and "timed out" in md)
 check("failed feed section is stated", "## Headlines" in md and "Unavailable" in md and "403" in md)
 check("empty tech says so distinctly", "score threshold" in md)
@@ -176,6 +181,19 @@ check("brackets in headline do not break link",
 # --- the whole thing still renders to HTML ---------------------------------
 html = db.markdown_to_html(md)
 check("renders to html", "<h2>" in html and "\x00" not in html)
+
+# --- defaults must be self-consistent -----------------------------------------
+# A feed section only renders when it is named in DEFAULT_CONFIG["sections"].
+# Adding a feed without adding its section makes a fresh install silently ship
+# without it, which is exactly how the science/nature/film sections went missing
+# from the first build that shipped them.
+_feed_sections = {f["section"] for f in map(S.normalise_feed, S.DEFAULT_FEEDS) if f}
+_default_sections = set(db.DEFAULT_CONFIG["sections"])
+check("every DEFAULT_FEEDS section is enabled by default",
+      _feed_sections <= _default_sections)
+check("every default feed has a title",
+      all(s in db.DEFAULT_SECTION_TITLES for s in _feed_sections))
+check("default feeds all normalise", all(S.normalise_feed(f) for f in S.DEFAULT_FEEDS))
 
 bad_n = [k for k, v in checks.items() if not v]
 for k, v in checks.items():

@@ -21,10 +21,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 // Article, CalendarMonth and GridView need no import: they are vendored in
-// Icons.kt, in this same package. Place and Refresh come from
-// material-icons-core, which material3 already puts on the classpath.
+// Icons.kt, in this same package. Place comes from material-icons-core, which
+// material3 already puts on the classpath.
 import androidx.compose.material.icons.filled.Place
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -140,8 +139,12 @@ private fun RootScreen() {
             messageIsError = !result.ok && !result.busy
             message = when {
                 result.busy -> "A brief is already being generated."
-                result.ok && result.sections.isNotBlank() -> result.sections
-                result.ok -> "Brief updated"
+                // A successful run needs no strip under the brief: the brief
+                // itself ends with a "Sources N/N OK" line, so printing the raw
+                // per-section statuses (bankholiday=empty, calendar=empty, ...)
+                // repeated that information and permanently ate screen space.
+                // Failures still surface here, which is what the strip is for.
+                result.ok -> null
                 else -> result.error?.lines()?.lastOrNull { it.isNotBlank() }
                     ?: "The brief could not be generated"
             }
@@ -169,9 +172,9 @@ private fun RootScreen() {
                             Icon(Icons.Default.Place, contentDescription = "Change location")
                         }
                     }
-                    IconButton(onClick = { generate() }, enabled = !running) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Generate now")
-                    }
+                    // No refresh action here: the brief renders its own Refresh
+                    // control, so a second one in the app bar was a duplicate of
+                    // the same generate() call sitting a few pixels above it.
                 },
             )
         },
@@ -255,7 +258,6 @@ private fun CityPrompt(city: String, onCityChange: (String) -> Unit, onSave: () 
             value = city,
             onValueChange = onCityChange,
             label = { Text("City") },
-            placeholder = { Text("Edinburgh") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )

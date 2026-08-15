@@ -65,13 +65,33 @@ WMO = {
 }
 
 DEFAULT_FEEDS = [
-    {"name": "BBC", "url": "https://feeds.bbci.co.uk/news/rss.xml",
-     "section": "news", "max_items": 2, "max_age_hours": 24, "enabled": True},
-    {"name": "Guardian", "url": "https://www.theguardian.com/uk/rss",
-     "section": "news", "max_items": 2, "max_age_hours": 24, "enabled": True},
+    # Science in place of general news. Phys.org carries the day's research
+    # stories and is the freshest of the candidates tested; Guardian Science
+    # supplies the written-up, readable end of the same day.
+    {"name": "Phys.org", "url": "https://phys.org/rss-feed/",
+     "section": "science", "max_items": 2, "max_age_hours": 24, "enabled": True},
+    {"name": "Guardian Science", "url": "https://www.theguardian.com/science/rss",
+     "section": "science", "max_items": 1, "max_age_hours": 24, "enabled": True},
+
+    # Paper of the day. Nature publishes weekly, so a 24h window would leave
+    # this permanently empty -- it gets a week.
+    # Nature's feed mixes real research with corrections and errata, and an
+    # "Author Correction:" is not a paper of the day.
+    {"name": "Nature", "url": "https://www.nature.com/nature.rss",
+     "section": "nature", "max_items": 1, "max_age_hours": 168, "enabled": True,
+     "skip_titles": ["author correction", "publisher correction", "erratum",
+                     "retraction", "editorial expression of concern", "matters arising"]},
+
+    # Film and series news. Both run hot (minutes old at test time), so one
+    # item each is plenty.
+    {"name": "Variety", "url": "https://variety.com/feed/",
+     "section": "film", "max_items": 1, "max_age_hours": 24, "enabled": True},
+    {"name": "Hollywood Reporter", "url": "https://www.hollywoodreporter.com/feed/",
+     "section": "film", "max_items": 1, "max_age_hours": 24, "enabled": True},
 ]
 
-FEED_DEFAULTS = {"section": "news", "max_items": 2, "max_age_hours": 24, "enabled": True}
+FEED_DEFAULTS = {"section": "news", "max_items": 2, "max_age_hours": 24, "enabled": True,
+                 "skip_titles": []}
 
 
 def normalise_feed(entry) -> dict | None:
@@ -96,6 +116,10 @@ def normalise_feed(entry) -> dict | None:
         except (TypeError, ValueError, KeyError):
             feed[k] = FEED_DEFAULTS[k]
     feed["enabled"] = bool(feed.get("enabled", True))
+    raw_skip = feed.get("skip_titles") or []
+    if isinstance(raw_skip, str):
+        raw_skip = [raw_skip]
+    feed["skip_titles"] = [str(s).strip().lower() for s in raw_skip if str(s).strip()]
     return feed
 
 
@@ -383,6 +407,10 @@ def feed_group(section: str, feeds: list[dict]) -> Section:
             if not items:
                 problems.append(f"{f['name']}: 0 items")
                 continue
+            skip = f.get("skip_titles") or []
+            if skip:
+                items = [it for it in items
+                         if not any(s in it.title.lower() for s in skip)]
             fresh = [it for it in items if it.when is None or it.when >= cutoff]
             if not fresh:
                 newest = max((it.when for it in items if it.when), default=None)
@@ -592,36 +620,83 @@ def featured(feed: dict | None = None) -> Section:
 # ------------------------------------------------------------------ almanac
 
 
+# Terms that mark an "on this day" entry as maths, science or medicine. Strong
+# terms are unambiguous; weak ones ("discovered", "invented") also fire on
+# exploration and politics, so they only break ties rather than qualify an entry
+# on their own -- otherwise "discovered the Pacific" outranks a real result.
+_OTD_STRONG = (
+    "physic", "astronom", "telescope", "orbit", "spacecraft", "satellite", "cosmonaut",
+    "astronaut", "quantum", "relativ", "particle", "atom", "nuclear", "radioactiv",
+    "electron", "neutron", "x-ray", "laser", "supernova", "comet", "asteroid",
+    "eclipse", "nasa", "cern", "apollo", "sputnik",
+    "mathematic", "geometr", "algebra", "theorem", "calculus", "equation", "topolog",
+    "logarithm", "algorithm", "cryptograph", "computer",
+    "chemist", "molecul", "periodic table", "isotope", "dna", "genome", "genetic",
+    "evolution", "biolog", "protein", "microscope", "bacteri", "virus",
+    "medic", "vaccin", "surger", "surgeon", "anaesthe", "anesthe", "antibiotic",
+    "penicillin", "transplant", "epidemic", "pandemic", "insulin", "smallpox",
+    "polio", "physician", "antisepsis", "anatom", "cholera", "tuberculosis",
+    "nobel prize", "scientist", "laborator", "periodic law",
+)
+_OTD_WEAK = ("discover", "invent", "experiment", "patent", "publish", "theory", "element")
+
+
+def _otd_score(text: str) -> int:
+    low = text.lower()
+    return 2 * sum(t in low for t in _OTD_STRONG) + sum(t in low for t in _OTD_WEAK)
+
+
 def on_this_day(today: dt.date) -> Section:
+    """The day's entry, preferring the history of maths, science and medicine.
+
+    `selected` is Wikimedia's curated set (about 13 entries) and often contains
+    no science at all, so the wider `events` list is used as a second pool
+    before giving up and taking the best general entry.
+    """
     started = _now_ms()
     # Must be zero-padded MM/DD -- '13/01' returns HTTP 500.
     path = f"{today:%m/%d}"
     urls = [
-        f"https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/selected/{path}",
-        f"https://en.wikipedia.org/api/rest_v1/feed/onthisday/selected/{path}",
+        f"https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/{{kind}}/{path}",
+        f"https://en.wikipedia.org/api/rest_v1/feed/onthisday/{{kind}}/{path}",
     ]
     last = "unavailable"
-    for url in urls:
-        try:
-            # The default Python UA is hard-403'd by Wikimedia policy.
-            payload = fetch(url, accept="application/json", user_agent=WIKIMEDIA_UA).json()
-            events = payload.get("selected") or []
-            if not events:
-                last = "no events listed"
+    pool: list[dict] = []
+    for kind in ("selected", "events"):
+        for url in urls:
+            try:
+                # The default Python UA is hard-403'd by Wikimedia policy.
+                payload = fetch(url.format(kind=kind), accept="application/json",
+                                user_agent=WIKIMEDIA_UA).json()
+            except (FetchError, ValueError) as exc:
+                last = str(exc)
                 continue
-            picked = max(events, key=lambda e: len(e.get("text") or ""))
-            return Section(
-                "onthisday",
-                OK,
-                data={
-                    "year": picked.get("year"),
-                    "text": clean_text(picked.get("text"), 260),
-                },
-                elapsed_ms=_since(started),
-            )
-        except (FetchError, ValueError) as exc:
-            last = str(exc)
-    return Section("onthisday", FAILED, reason=last, elapsed_ms=_since(started))
+            got = payload.get(kind) or []
+            if got:
+                pool.extend(got)
+                break
+        # A scoring hit in the curated set is better than trawling the raw one.
+        if pool and max(_otd_score(e.get("text") or "") for e in pool) > 0:
+            break
+
+    if not pool:
+        return Section("onthisday", FAILED, reason=last, elapsed_ms=_since(started))
+
+    scored = [(_otd_score(e.get("text") or ""), len(e.get("text") or ""), e) for e in pool]
+    best_score = max(s for s, _, _ in scored)
+    # Ties go to the fullest entry, which reads better than a one-clause stub.
+    _, _, picked = max(scored, key=lambda t: (t[0], t[1]))
+    return Section(
+        "onthisday",
+        OK,
+        data={
+            "year": picked.get("year"),
+            "text": clean_text(picked.get("text"), 260),
+            "on_topic": best_score > 0,
+        },
+        reason="" if best_score > 0 else "nothing scientific listed today",
+        elapsed_ms=_since(started),
+    )
 
 
 def iter_calendar_sources(path):

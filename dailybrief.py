@@ -77,8 +77,11 @@ DEFAULT_CONFIG = {
         "precipitation": "mm",        # mm | inch
         "clock": "24h",               # 24h | 12h
     },
-    "sections": ["calendar", "threexthree", "weather", "news", "tech", "paper", "featured",
-                 "onthisday", "bankholiday"],
+    # A feed section only renders if it is named here, so this list must stay in
+    # step with the sections used by DEFAULT_FEEDS -- otherwise a fresh install
+    # fetches nothing from them and the brief silently ships without them.
+    "sections": ["calendar", "threexthree", "weather", "science", "nature", "film",
+                 "tech", "paper", "featured", "onthisday", "bankholiday"],
     # Paper of the day: newest arXiv submission in these categories.
     "paper_categories": ["eess.AS", "cs.SD"],
     # News of the day: one story with its standfirst, from a single-story feed.
@@ -501,6 +504,11 @@ def markdown_to_html(md: str) -> str:
 # (project a4819508, a cherry-red retheme of the Nocturne design system).
 # Canvas artifacts from the design tool -- absolute positioning, fixed pixel
 # widths on text -- are deliberately not ported; the token values are verbatim.
+# The Android shell already shows "Daily Brief · <city>" in its own app bar, so
+# repeating the brand inside the page put the same words twice on one screen and
+# pushed the date down. Desktop has no such chrome and still needs it.
+BRAND_HTML = "" if platform_shim.PLATFORM == "android" else '<span class="brand">Daily brief</span>'
+
 PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -690,7 +698,7 @@ a.feature-title:hover {{ color: var(--color-accent-300); text-decoration: underl
 }}
 </style>
 <div class="topbar">
-  <span class="brand">Daily brief</span>
+  {brand}
   <a class="btn" id="refresh" href="dailybrief:refresh" target="_self" title="Regenerate today's brief">
     <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"><path d="M224 128a96 96 0 1 1-28-68"/><path d="M196 24v40h-40"/></svg>
     Refresh
@@ -753,6 +761,7 @@ def render_page(*, heading: str, lede: str, body_html: str, meta_bits: list[str]
     meta = " · ".join(htmllib.escape(b) for b in [*meta_bits, footer] if b)
     foot = (f'<div class="foot"><span class="dot"></span><span>{meta}</span></div>' if meta else "")
     return PAGE.format(
+        brand=BRAND_HTML,
         title=htmllib.escape(f"Daily Brief - {heading}"),
         heading=htmllib.escape(heading),
         lede=lede_html,
@@ -786,6 +795,8 @@ DEFAULT_SECTION_TITLES = {
     "audio": "Audio & DSP",
     "sport": "Sport",
     "science": "Science",
+    "nature": "Paper of the day",
+    "film": "Film & series",
     "local": "Local",
 }
 
@@ -1475,6 +1486,7 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
     heading = today.strftime("%A %d %B")
     lede_html = f'<p class="lede">{_esc(tldr)}</p>' if tldr else ""
     return netlib.scrub(PAGE.format(
+        brand=BRAND_HTML,
         title=_esc(f"Daily Brief - {heading}"),
         heading=_esc(heading),
         lede=lede_html,

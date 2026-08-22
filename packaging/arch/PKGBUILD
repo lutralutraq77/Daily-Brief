@@ -9,7 +9,7 @@
 # package is arch-independent. The only build step is rendering the icon.
 
 pkgname=dailybrief
-pkgver=1.1.0
+pkgver=1.5.0
 pkgrel=1
 pkgdesc="Credential-free morning briefing: weather, calendar, headlines and papers"
 arch=('any')

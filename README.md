@@ -298,13 +298,21 @@ All requests run in parallel, typically about a second end to end.
 
 ## The look
 
-The page is Danny's **"Daily brief app template"** from claude.ai/design — a
-cherry-red retheme of the Nocturne design system: `#1b1216` ground, `#ef4a5f`
-accent used as marks and lines rather than fills, Inter at weight 500,
-left-aligned with the whitespace on the right. The token block sits at the top
+The page is Danny's **"Daily Brief HIG"** design file: an Apple Human Interface
+Guidelines dark layout. Black-ish `#1c1c1e` ground with `#2c2c2e` grouped
+content, hairline `#48484a` separators, a `#7d7aff` periwinkle tint, the system
+UI font, and a 430px centred column. The structure is iOS's: a large-title nav
+bar, then inset grouped cards and lists under small uppercase headers, each with
+an accent dot from the design's five-colour set. The token block sits at the top
 of `PAGE` in `dailybrief.py`; the layout is generated per-section by
 `compose_page`, so every element in the mock is real data here, and failed
 sections say so instead of disappearing.
+
+Two controls in the mock are deliberately **not** ported, because nothing sits
+behind either: the nav bar's "Edit" button (there is no editing surface) and the
+paper card's "Save" pill (nothing saves). The row chevron is kept only on rows
+that really are links, so calendar rows — which carry no URL — do not pretend to
+open anything.
 
 The **Refresh** button works from the static page: it fires `dailybrief:refresh`
 (the same protocol the toast uses), which regenerates `latest.html` in place;

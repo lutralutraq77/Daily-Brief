@@ -500,35 +500,47 @@ def markdown_to_html(md: str) -> str:
 # ---------------------------------------------------------------- page render
 
 
-# The visual design is Danny's "Daily brief app template" from claude.ai/design
-# (project a4819508, a cherry-red retheme of the Nocturne design system).
-# Canvas artifacts from the design tool -- absolute positioning, fixed pixel
-# widths on text -- are deliberately not ported; the token values are verbatim.
-# The whole in-page top bar is desktop-only.
+# The visual design is Danny's "Daily Brief HIG" file: an Apple Human Interface
+# Guidelines dark layout -- system font stack, a large-title nav bar, and inset
+# grouped lists on iOS dark elevation (black base, #2C2C2E grouped content) with
+# a periwinkle tint. Every token value below is verbatim from that file.
 #
-# On Android the app's own chrome already carries both halves of it: the app bar
-# reads "Daily Brief · <city>" and holds the refresh action. Worse, the in-page
-# Refresh is an <a href="dailybrief:refresh">, which depends on the protocol
-# handler firing from inside a WebView -- that is the one that did not reliably
-# regenerate anything, while the app-bar button calls generate() directly. So on
-# Android the bar is dropped entirely rather than left empty, which also returns
-# its vertical space to the brief.
+# Canvas artifacts from the design tool -- inline styles on every element, fixed
+# text widths -- are deliberately not ported; the values live in classes here so
+# one edit changes every instance. Two controls in the mock are not ported
+# either, both because nothing behind them exists: the "Edit" nav button (there
+# is no editing surface) and the paper card's "Save" pill (nothing saves). A
+# control that does nothing is worse than an absent one. The row chevron is kept
+# only on rows that really are links -- calendar rows have no URL to open.
+#
+# The whole nav bar is desktop-only, and sticky only there.
+#
+# On Android the app's own chrome already carries the refresh action, and the
+# in-page Refresh is an <a href="dailybrief:refresh">, which depends on the
+# protocol handler firing from inside a WebView -- that is the one that did not
+# reliably regenerate anything, while the app-bar button calls generate()
+# directly. So on Android the nav row is dropped rather than left broken, and
+# the header stops being sticky: a sticky in-page header under a native app bar
+# is two stacked chromes eating the same small screen. The heading and the
+# place line stay, because the app bar carries neither.
 #
 # Desktop has no app chrome at all: the page IS the window, so it keeps both.
-_BRAND_HTML = '<span class="brand">Daily brief</span>'
 _REFRESH_HTML = (
-    '<a class="btn" id="refresh" href="dailybrief:refresh" target="_self" '
-    'title="Regenerate today\'s brief">'
-    '<svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="18" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M224 128a96 96 0 1 1-28-68"/><path d="M196 24v40h-40"/></svg>'
-    "Refresh</a>"
+    '<div class="nav-row">'
+    '<a class="nav-btn" id="refresh" href="dailybrief:refresh" target="_self" '
+    'title="Regenerate today\'s brief">Refresh</a>'
+    "</div>"
 )
-TOPBAR_HTML = (
-    ""
-    if platform_shim.PLATFORM == "android"
-    else f'<div class="topbar">{_BRAND_HTML}{_REFRESH_HTML}</div>'
-)
+_ANDROID = platform_shim.PLATFORM == "android"
+NAV_HTML = "" if _ANDROID else _REFRESH_HTML
+NAV_STICKY = "" if _ANDROID else " sticky"
+
+# Section accent dots, from the design's five-colour set. Two sections may share
+# a colour, but never two that render next to each other.
+SECTION_DOT = {
+    "news": "tint", "science": "tint", "nature": "orange", "film": "pink",
+    "audio": "teal", "sport": "orange", "local": "pink", "tech": "indigo",
+}
 
 PAGE = """<!doctype html>
 <meta charset="utf-8">
@@ -537,195 +549,208 @@ PAGE = """<!doctype html>
 <title>{title}</title>
 <meta name="generated" content="{generated}">
 <style>
-/* Deliberately no webfont import. Fetching Inter meant a brief built entirely
+/* Deliberately no webfont import. Fetching a font meant a brief built entirely
    from keyless local sources still called out to a Google server every time it
    was opened -- on a phone chosen to avoid exactly that -- and did it on the
-   render path, so the text waited on the network to paint. The stack below
-   already named system-ui as the fallback; it is now simply the font, and a
-   locally installed Inter is still picked up at no network cost. */
+   render path, so the text waited on the network to paint. The design asks for
+   the system UI font anyway: -apple-system resolves on Apple platforms, and
+   system-ui gives Segoe UI on Windows and Roboto on Android at no network cost.
+*/
 :root {{
   color-scheme: dark;
-  /* Nocturne token roles, cherry ramp -- every value from the design file. */
-  --color-bg: #1b1216;
-  --color-surface: #2a1b21;
-  --color-text: #f2dde1;
-  --color-accent: #ef4a5f;
-  --color-divider: color-mix(in srgb, #f2dde1 15%, transparent);
-  --color-accent-100: #fff1f3; --color-accent-200: #ffdee2; --color-accent-300: #ffb9c2;
-  --color-accent-400: #f8808f; --color-accent-500: #ef4a5f; --color-accent-600: #cb3a4d;
-  --color-accent-700: #9d2c3c; --color-accent-800: #6e202c; --color-accent-900: #45161d;
-  --color-neutral-100: #f6f2f3; --color-neutral-800: #453a3e; --color-neutral-900: #2e2529;
-  --font-heading: "Inter", system-ui, sans-serif;
-  --font-heading-weight: 500;
-  --font-body: "Inter", system-ui, sans-serif;
-  --space-1: 2.8px; --space-2: 5.6px; --space-3: 8.4px;
-  --space-4: 11.2px; --space-6: 16.8px; --space-8: 22.4px;
-  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 14px;
-  /* Legacy aliases so the markdown/prose path and error pages share the theme */
-  --bg: var(--color-bg); --panel: var(--color-surface); --ink: var(--color-text);
-  --muted: color-mix(in srgb, var(--color-text) 55%, transparent);
-  --line: var(--color-divider); --accent: var(--color-accent);
-  --accent-soft: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  --code-bg: var(--color-neutral-900);
-  --shadow: 0 0 0 1px #453a3e, 0 6px 18px rgba(0,0,0,0.55);
+  /* Apple HIG dark tokens -- every value from the design file. */
+  --bg: #1c1c1e;
+  --group: #2c2c2e;
+  --group-2: #3a3a3c;
+  --sep: #48484a;
+  --label: #ffffff;
+  --label-2: rgba(235,235,245,0.60);
+  --label-3: rgba(235,235,245,0.30);
+  --tint: #7d7aff;
+  --orange: #ffd60a;
+  --teal: #66d4cf;
+  --indigo: #ff9f0a;
+  --pink: #dedcff;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Consolas, monospace;
 }}
 * {{ box-sizing: border-box; }}
 body {{
-  margin: 0; padding: 0 var(--space-6) var(--space-8);
-  background: var(--color-bg); color: var(--color-text);
-  font-family: var(--font-body); font-size: 15px; line-height: 1.55;
-  -webkit-font-smoothing: antialiased; max-width: 1180px;
+  margin: 0; background: var(--bg); color: var(--label);
+  font-family: var(--font); -webkit-font-smoothing: antialiased;
 }}
-h1, h2, h3, h4, h5, h6 {{
-  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
-  line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2);
-}}
-h1 {{ font-size: 42px; }}
-h6 {{ font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }}
-a {{ color: var(--color-accent); text-underline-offset: 3px; }}
 :focus {{ outline: none; }}
-:focus-visible {{ outline: 2px solid var(--color-accent); outline-offset: 2px; }}
-::selection {{ background: color-mix(in srgb, var(--color-accent) 30%, transparent); }}
+:focus-visible {{ outline: 3px solid var(--tint); outline-offset: 2px; border-radius: 6px; }}
+::selection {{ background: rgba(125,122,255,0.35); }}
 
-.topbar {{
-  position: sticky; top: 0; z-index: 5;
-  display: flex; align-items: center; gap: var(--space-4);
-  padding: var(--space-3) 0 var(--space-4);
-  background: linear-gradient(var(--color-bg) 78%, transparent);
-}}
-.brand {{ font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 18px; margin-right: auto; }}
-.btn {{
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  cursor: pointer; text-decoration: none;
-  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
-  font-size: 14px; line-height: 1.2; color: var(--color-accent);
-  background: transparent; border: 1px solid var(--color-accent);
-  padding: var(--space-2) calc(var(--space-3) * 1.2); border-radius: var(--radius-md);
-}}
-.btn:hover {{ background: color-mix(in srgb, var(--color-accent) 12%, transparent); }}
-.btn:active {{ background: color-mix(in srgb, var(--color-accent) 22%, transparent); }}
-.btn svg {{ width: 15px; height: 15px; flex: none; }}
-.btn.busy {{ opacity: 0.55; pointer-events: none; }}
-
+.app {{ min-height: 100vh; background: var(--bg); display: flex; justify-content: center; }}
 /* overflow-wrap must be `anywhere`, not `break-word`: only `anywhere` counts
    towards a track's intrinsic min-content size, so `break-word` would leave the
    grids below exactly as wide as the longest bare URL and fix nothing. */
-.brief {{ max-width: 660px; margin-left: min(6vw, calc(var(--space-8) * 3)); overflow-wrap: anywhere; }}
-.lede {{ font-size: 16px; line-height: 1.5; margin: 0 0 var(--space-2); max-width: 46ch; text-wrap: pretty; }}
-.placeline {{ margin: 0 0 var(--space-2); font-size: 17px; color: color-mix(in srgb, var(--color-text) 78%, transparent); }}
+.col {{ width: 100%; max-width: 430px; padding-bottom: 48px; overflow-wrap: anywhere; }}
 
-.sect {{ margin: var(--space-8) 0 var(--space-4); display: flex; align-items: center; gap: var(--space-2); }}
-.sect h6 {{ margin: 0; color: color-mix(in srgb, var(--color-text) 62%, transparent); }}
-.sect::before {{ content: ""; width: 2px; height: 13px; flex: none; background: var(--color-accent); border-radius: 1px; }}
+/* ---- large-title nav bar ---- */
+.nav {{ padding: 8px 16px 10px; border-bottom: 0.5px solid var(--sep); }}
+.nav.sticky {{
+  position: sticky; top: 0; z-index: 10; background: rgba(28,28,30,0.82);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}}
+.nav-row {{ display: flex; align-items: center; justify-content: flex-end; gap: 16px; min-height: 32px; }}
+.nav-btn {{ font-size: 17px; letter-spacing: -0.4px; color: var(--tint); cursor: pointer; text-decoration: none; }}
+.nav-btn.busy {{ opacity: 0.45; pointer-events: none; }}
+.nav h1 {{ margin: 2px 0 0; font-size: 34px; line-height: 41px; font-weight: 700; letter-spacing: 0.37px; }}
+.nav p {{ margin: 2px 0 0; font-size: 15px; line-height: 20px; letter-spacing: -0.24px; color: var(--label-2); }}
 
-.wx {{ display: flex; align-items: flex-end; gap: var(--space-6); flex-wrap: wrap; }}
-.wx-now {{ display: flex; align-items: baseline; gap: 2px; }}
-.wx-now .n {{ font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 38px; line-height: 0.9; letter-spacing: -0.02em; }}
-.wx-now .u {{ font-size: 16px; color: var(--color-accent); }}
-.wx-stats {{ display: flex; gap: var(--space-6); flex-wrap: wrap; padding-bottom: 3px; }}
-.wx-stat {{ display: grid; gap: 1px; }}
-.wx-stat .k {{ font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 45%, transparent); }}
-.wx-stat .v {{ font-size: 15px; }}
-.wx-cond {{ font-size: 14px; color: color-mix(in srgb, var(--color-text) 72%, transparent); margin-top: var(--space-2); }}
+/* ---- section rhythm ---- */
+.stack {{ padding: 0 16px; display: grid; gap: 28px; margin-top: 20px; }}
+.stack > section {{ min-width: 0; }}
+section > * + * {{ margin-top: 12px; }}
+section > h2 + * {{ margin-top: 0; }}
+h2 {{
+  margin: 0 0 7px 16px; display: flex; align-items: center; gap: 7px;
+  font-size: 13px; line-height: 18px; font-weight: 400; letter-spacing: -0.08px;
+  text-transform: uppercase; color: var(--label-2);
+}}
+.dot {{ width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--tint); }}
+.dot-tint {{ background: var(--tint); }}
+.dot-teal {{ background: var(--teal); }}
+.dot-orange {{ background: var(--orange); }}
+.dot-indigo {{ background: var(--indigo); }}
+.dot-pink {{ background: var(--pink); }}
 
-.tl {{ display: grid; gap: var(--space-1); }}
+/* ---- inset grouped content ---- */
+.card {{ background: var(--group); border-radius: 14px; padding: 16px; }}
+.list {{ background: var(--group); border-radius: 14px; overflow: hidden; }}
 /* minmax(0, 1fr), not 1fr: a 1fr track keeps an automatic minimum of
    min-content, so one unbreakable token (a bare meeting URL) widens the row
    past the viewport and scrolls the whole page sideways. */
-.tl-row {{ display: grid; grid-template-columns: 64px 5px minmax(0, 1fr); align-items: stretch; gap: var(--space-3); padding: var(--space-2) 0; }}
-.tl-times {{ display: grid; gap: 2px; font-size: 13px; font-variant-numeric: tabular-nums; padding-top: 1px; align-content: start; }}
-.tl-times .s {{ color: color-mix(in srgb, var(--color-text) 85%, transparent); }}
-.tl-times .e {{ color: color-mix(in srgb, var(--color-text) 66%, transparent); }}
-.tl-bar {{ width: 3px; min-height: 30px; border-radius: 2px; background: var(--color-accent); align-self: start; height: 100%; }}
-.tl-bar.dim {{ background: color-mix(in srgb, var(--color-accent) 45%, transparent); }}
-.tl-body {{ display: grid; gap: 2px; align-content: start; }}
-.tl-title {{ font-size: 15px; }}
-.tl-meta {{ font-size: 11px; color: color-mix(in srgb, var(--color-text) 60%, transparent); }}
-
-.stories {{ display: grid; gap: var(--space-1); }}
-.story {{
-  /* minmax(0, 1fr) for the same reason as .tl-row: .stories is itself a
-     single-column grid, so one long headline URL stretched every sibling row. */
-  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); align-items: baseline;
-  padding: var(--space-2) var(--space-2) var(--space-2) 0; border-radius: var(--radius-sm);
+.row {{
+  position: relative; display: grid; align-items: center; gap: 12px; min-width: 0;
+  min-height: 56px; padding: 11px 16px; text-decoration: none; color: var(--label);
 }}
-.story:hover {{ background: color-mix(in srgb, var(--color-text) 4%, transparent); }}
-.story .tag {{ align-self: center; }}
-.story a {{ color: var(--color-text); text-decoration: none; font-size: 15px; line-height: 1.4; }}
-.story a:hover {{ color: var(--color-accent-300); text-decoration: underline; }}
-.story .t {{ font-size: 11px; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--color-text) 38%, transparent); margin-left: var(--space-2); white-space: nowrap; }}
-/* .t holds a clock time in the feed sections and a hostname in Tech. A time
-   must never wrap; a 47-char host must never be an atomic 263px block.
-   Not a media query: the mismatch is semantic, not viewport-dependent --
-   a hostname needs no nowrap at any width. */
-.story .t.host {{ white-space: normal; overflow-wrap: anywhere; }}
+.row + .row::before {{
+  content: ""; position: absolute; left: 16px; right: 0; top: 0;
+  height: 0.5px; background: var(--sep);
+}}
+a.row:hover {{ background: var(--group-2); }}
+.row .t {{ font-size: 17px; line-height: 22px; letter-spacing: -0.4px; text-wrap: pretty; }}
+.row .m {{ font-size: 13px; line-height: 17px; letter-spacing: -0.08px; color: var(--label-2); }}
+.body {{ display: grid; gap: 1px; min-width: 0; }}
+.chev {{ font-size: 17px; color: var(--label-3); }}
+.empty {{
+  min-height: 44px; grid-template-columns: minmax(0, 1fr);
+  font-size: 15px; line-height: 20px; letter-spacing: -0.24px; color: var(--label-2);
+}}
+/* The iOS grouped-list footer: explanatory text, aligned to the group's text
+   inset rather than its edge. */
+.note {{ margin: 7px 16px 0; font-size: 13px; line-height: 18px; letter-spacing: -0.08px; color: var(--label-2); }}
+.note strong {{ color: var(--label); font-weight: 600; }}
+.lede {{ margin: 0; font-size: 16px; line-height: 21px; letter-spacing: -0.24px; color: var(--label-2); text-wrap: pretty; }}
+code {{ font-family: var(--mono); font-size: 0.86em; background: var(--group-2); padding: 1.5px 5px; border-radius: 5px; }}
 
-.tag {{ display: inline-flex; align-items: center; font-size: 11px; letter-spacing: 0.02em; padding: 3px 10px; border-radius: calc(var(--radius-md) * 0.75); }}
-.tag-accent {{ background: var(--color-accent-800); color: var(--color-accent-100); }}
-.tag-neutral {{ background: var(--color-neutral-800); color: var(--color-neutral-100); }}
-.tag-outline {{ border: 1px solid var(--color-accent); color: var(--color-accent); }}
+/* ---- weather ---- */
+.wx {{ padding: 16px 16px 18px; }}
+.wx-top {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }}
+.wx-cond {{ margin: 0 0 2px; font-size: 13px; line-height: 16px; letter-spacing: -0.08px; color: var(--label-2); }}
+.wx-now {{ display: flex; align-items: flex-start; gap: 1px; }}
+.wx-now .n {{ font-size: 52px; line-height: 52px; font-weight: 200; letter-spacing: -1.5px; }}
+.wx-now .u {{ font-size: 20px; line-height: 24px; font-weight: 300; color: var(--label-2); padding-top: 4px; }}
+.wx-hl {{ margin: 0; text-align: right; font-size: 15px; line-height: 20px; letter-spacing: -0.24px; color: var(--label-2); max-width: 20ch; }}
+.wx-stats {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 16px; border-top: 0.5px solid var(--sep); padding-top: 14px; }}
+.wx-stat {{ display: grid; gap: 2px; min-width: 0; }}
+.wx-stat .k {{ font-size: 11px; letter-spacing: 0.06px; text-transform: uppercase; color: var(--label-3); }}
+.wx-stat .v {{ font-size: 17px; letter-spacing: -0.4px; overflow-wrap: normal; }}
+.nb {{ white-space: nowrap; }}
 
-.feature {{ display: grid; gap: var(--space-2); max-width: 58ch; }}
-.feature-meta {{ display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }}
-.feature-meta .t {{ font-size: 11px; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--color-text) 55%, transparent); }}
-.feature-title {{ color: var(--color-text); text-decoration: none; font-size: 17px; line-height: 1.35; }}
-a.feature-title:hover {{ color: var(--color-accent-300); text-decoration: underline; }}
-.feature-body {{ margin: 0; font-size: 14px; line-height: 1.55; color: color-mix(in srgb, var(--color-text) 78%, transparent); text-wrap: pretty; }}
-.feature-foot {{ font-size: 12px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }}
+/* ---- calendar ---- */
+.ev {{ grid-template-columns: 66px 3px minmax(0, 1fr); }}
+.ev-time {{ display: grid; gap: 1px; font-variant-numeric: tabular-nums; }}
+.ev-time .s {{ font-size: 17px; line-height: 21px; letter-spacing: -0.4px; }}
+.ev-time .e {{ font-size: 13px; line-height: 17px; letter-spacing: -0.08px; color: var(--label-2); }}
+.ev-bar {{ align-self: stretch; border-radius: 1.5px; background: var(--tint); }}
+.ev-bar.allday {{ background: var(--orange); }}
 
-.otd {{ font-size: 14px; line-height: 1.55; max-width: 56ch; color: color-mix(in srgb, var(--color-text) 82%, transparent); text-wrap: pretty; }}
-.otd .yr {{ color: var(--color-accent); font-family: var(--font-heading); font-weight: var(--font-heading-weight); }}
+/* ---- story rows ---- */
+.story {{ grid-template-columns: minmax(0, 1fr) auto; }}
+/* ---- numbered rows (the weekly three) ---- */
+.n3 {{ grid-template-columns: auto minmax(0, 1fr); }}
+.num {{
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 11px; background: var(--tint); color: #fff;
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; flex: none;
+}}
 
-.unavail {{ font-size: 13px; color: color-mix(in srgb, var(--color-text) 55%, transparent); font-style: italic; }}
-/* The 3x3 section quotes commands you are meant to type, outside .prose. */
-.feature-body code, .wx-cond code {{ font: 12px/1.5 ui-monospace, Consolas, monospace; background: var(--code-bg); padding: 1.5px 5px; border-radius: var(--radius-sm); }}
+/* ---- feature cards ---- */
+.kicker {{ margin: 0 0 6px; font-size: 12px; line-height: 16px; color: var(--tint); font-variant-numeric: tabular-nums; }}
+.card-title {{ display: block; font-size: 20px; line-height: 25px; font-weight: 600; letter-spacing: -0.45px; color: var(--label); text-decoration: none; text-wrap: pretty; }}
+a.card-title:hover {{ color: var(--tint); }}
+.card-body {{ margin: 8px 0 0; font-size: 15px; line-height: 21px; letter-spacing: -0.24px; color: var(--label-2); text-wrap: pretty; }}
+.card-foot {{ margin: 12px 0 0; font-size: 12px; line-height: 16px; color: var(--label-3); }}
+.actions {{ display: flex; align-items: center; gap: 10px; margin-top: 14px; }}
+.pill {{
+  display: inline-flex; align-items: center; justify-content: center; height: 34px;
+  padding: 0 16px; border-radius: 17px; background: var(--tint); color: #fff;
+  font-size: 15px; font-weight: 600; letter-spacing: -0.24px; text-decoration: none; flex: none;
+}}
+.pill:hover {{ filter: brightness(0.92); }}
+.byline {{ margin-left: auto; text-align: right; font-size: 12px; line-height: 16px; color: var(--label-3); }}
+
+/* ---- on this day ---- */
+.otd {{ background: var(--pink); border-radius: 14px; padding: 16px; }}
+.otd p {{ margin: 0; font-size: 16px; line-height: 22px; letter-spacing: -0.31px; color: #1e1c4d; text-wrap: pretty; }}
+.otd .yr {{ font-weight: 600; }}
+
+/* ---- notices and status ---- */
 .notice {{
-  margin: var(--space-4) 0; padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--color-accent-700); border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-accent) 8%, transparent); font-size: 14px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start;
+  background: var(--group); border-radius: 14px; padding: 14px 16px;
+  font-size: 15px; line-height: 20px; letter-spacing: -0.24px;
 }}
+.notice .dot {{ background: var(--orange); margin-top: 6px; }}
+.status {{ margin: 0; text-align: center; font-size: 13px; line-height: 18px; letter-spacing: -0.08px; color: var(--label-3); }}
+/* A failed source must not read as quietly as a healthy one. The line already
+   names what broke; the colour is what makes you look at it. */
+.status.bad {{ color: var(--orange); }}
 
-.foot {{ margin-top: var(--space-8); display: flex; align-items: center; gap: var(--space-2); font-size: 11px; color: color-mix(in srgb, var(--color-text) 42%, transparent); }}
-.foot .dot {{ width: 6px; height: 6px; border-radius: 50%; background: var(--color-accent); flex: none; }}
-.foot .dot.bad {{ background: var(--color-accent-700); }}
-
-/* Prose fallback: the Claude-engine and error paths render markdown here. */
-.prose {{ max-width: 62ch; }}
-.prose h2 {{ font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 62%, transparent); margin: var(--space-8) 0 var(--space-3); }}
-.prose p {{ margin: 0 0 var(--space-3); }}
-.prose ul, .prose ol {{ margin: 0 0 var(--space-3); padding-left: 22px; }}
-.prose li {{ margin: 5px 0; }}
-.prose a {{ color: var(--color-text); }}
-.prose a:hover {{ color: var(--color-accent-300); }}
-.prose code {{ font: 13px/1.5 ui-monospace, Consolas, monospace; background: var(--code-bg); padding: 1.5px 5px; border-radius: var(--radius-sm); }}
-.prose pre {{ background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 13px 15px; overflow-x: auto; }}
-.prose blockquote {{ margin: 0 0 var(--space-3); padding: 2px 0 2px 16px; border-left: 3px solid var(--color-accent); color: var(--muted); }}
-.prose .table-wrap {{ overflow-x: auto; margin: 0 0 var(--space-4); }}
+/* ---- prose fallback: the Claude engine and every error page render here ---- */
+.prose {{ background: var(--group); border-radius: 14px; padding: 16px; }}
+.prose > :last-child, .prose .error > :last-child {{ margin-bottom: 0; }}
+.prose h1 {{ margin: 0 0 10px; font-size: 22px; line-height: 28px; font-weight: 700; letter-spacing: -0.4px; }}
+.prose h2 {{ display: block; margin: 22px 0 8px; }}
+.prose > h2:first-child {{ margin-top: 0; }}
+.prose h3, .prose h4, .prose h5, .prose h6 {{ margin: 18px 0 6px; font-size: 17px; line-height: 22px; font-weight: 600; letter-spacing: -0.4px; }}
+.prose p, .prose li {{ font-size: 15px; line-height: 21px; letter-spacing: -0.24px; color: var(--label-2); }}
+.prose p {{ margin: 0 0 10px; }}
+.prose li {{ margin: 4px 0; }}
+.prose ul, .prose ol {{ margin: 0 0 10px; padding-left: 22px; }}
+.prose a {{ color: var(--tint); text-decoration: none; }}
+.prose a:hover {{ text-decoration: underline; }}
+.prose pre {{ background: var(--bg); border-radius: 10px; padding: 12px 14px; margin: 0 0 10px; overflow-x: auto; }}
+.prose pre code {{ background: none; padding: 0; font-size: 13px; }}
+.prose blockquote {{ margin: 0 0 10px; padding: 2px 0 2px 14px; border-left: 3px solid var(--tint); }}
+.prose hr {{ border: 0; border-top: 0.5px solid var(--sep); margin: 16px 0; }}
+.prose .table-wrap {{ overflow-x: auto; margin: 0 0 10px; }}
 .prose table {{ border-collapse: collapse; width: 100%; font-size: 14px; }}
-.prose th, .prose td {{ padding: 8px 11px; border-bottom: 1px solid var(--line); }}
-.prose .error {{ background: var(--accent-soft); border: 1px solid var(--color-accent-700); border-radius: var(--radius-md); padding: 16px 18px; }}
-
-/* The editorial left indent on .brief is desktop styling. .topbar has no left
-   offset, so on a phone the indent only pushes the heading out of line with the
-   "Daily brief" brand (21.6px adrift at 360px) and eats 6% of an already narrow
-   column. Removing it below the breakpoint puts both back on one left edge.
-
-   700px is the breakpoint because .brief's 660px measure stops fitting at about
-   738px of viewport (660 + 33.6px body padding + 6vw indent), so every width
-   that still achieves the design's full column keeps the indent exactly as it
-   is -- nothing about the desktop layout changes. */
-@media (max-width: 700px) {{
-  .brief {{ margin-left: 0; }}
-}}
+.prose th, .prose td {{ padding: 8px 10px; border-bottom: 0.5px solid var(--sep); }}
+.prose th {{ color: var(--label-2); font-weight: 600; }}
+.prose .error {{ background: var(--bg); border-radius: 10px; padding: 16px; margin: 0 0 10px; }}
+.prose .error h3 {{ margin-top: 0; }}
+/* The error well is already --bg; a --bg code block inside it would vanish. */
+.prose .error pre {{ background: var(--group-2); }}
 </style>
-{topbar}
-<main class="brief">
-  <header>
-    <h1>{heading}</h1>
-    {lede}
-  </header>
-  {body}
-</main>
+<div class="app">
+  <div class="col">
+    <header class="nav{sticky}">
+      {nav}
+      <h1>{heading}</h1>
+      {subtitle}
+    </header>
+    <main class="stack">
+{body}
+    </main>
+  </div>
+</div>
 <script>
 // The protocol handler regenerates latest.html in place; this page reloads
 // itself until the embedded generation stamp changes. State lives in
@@ -737,7 +762,7 @@ a.feature-title:hover {{ color: var(--color-accent-300); text-decoration: underl
   var busy = function () {{
     if (!btn) return;
     btn.classList.add('busy');
-    btn.lastChild.textContent = ' Refreshing…';
+    btn.textContent = 'Refreshing…';
   }};
   try {{
     var want = sessionStorage.getItem('db-refresh-from');
@@ -771,16 +796,17 @@ a.feature-title:hover {{ color: var(--color-accent-300); text-decoration: underl
 
 def render_page(*, heading: str, lede: str, body_html: str, meta_bits: list[str], footer: str) -> str:
     """Prose shell: markdown-derived bodies (Claude engine, error pages,
-    render-last) inside the same cherry chrome the structured brief uses."""
-    lede_html = f'<p class="lede">{inline(lede)}</p>' if lede else ""
+    render-last) inside the same HIG chrome the structured brief uses."""
+    subtitle = f"<p>{inline(lede)}</p>" if lede else ""
     meta = " · ".join(htmllib.escape(b) for b in [*meta_bits, footer] if b)
-    foot = (f'<div class="foot"><span class="dot"></span><span>{meta}</span></div>' if meta else "")
+    status = f'<section><p class="status">{meta}</p></section>' if meta else ""
     return PAGE.format(
-        topbar=TOPBAR_HTML,
+        nav=NAV_HTML,
+        sticky=NAV_STICKY,
         title=htmllib.escape(f"Daily Brief - {heading}"),
         heading=htmllib.escape(heading),
-        lede=lede_html,
-        body=f'<div class="prose">{body_html}</div>{foot}',
+        subtitle=subtitle,
+        body=f'<section><div class="prose">{body_html}</div></section>{status}',
         generated=dt.datetime.now().isoformat(timespec="seconds"),
     )
 
@@ -1152,21 +1178,50 @@ def _days_left_text(left: int) -> str:
     return "last day" if left == 0 else f"{left} day{'s' if left != 1 else ''} left"
 
 
-def _sect(title: str) -> str:
-    return f'<div class="sect"><h6>{_esc(title)}</h6></div>'
+def _section(*parts: str, title: str = "", dot: str = "") -> str:
+    """One inset-grouped section: an optional uppercase header with an accent
+    dot, then any number of cards, lists and footnotes. Spacing between the
+    parts is CSS's job, so a caller only has to say what goes in."""
+    inner = "".join(p for p in parts if p)
+    if not inner:
+        return ""
+    head = ""
+    if title:
+        bullet = f'<span class="dot dot-{dot}"></span>' if dot else ""
+        head = f"<h2>{bullet}{_esc(title)}</h2>"
+    return f"<section>{head}{inner}</section>"
+
+
+def _note(html: str) -> str:
+    """Grouped-list footer text: the explanatory line under a card."""
+    return f'<p class="note">{html}</p>'
+
+
+def _empty(text: str) -> str:
+    """A section with nothing in it still gets its card, and says why."""
+    return f'<div class="list"><div class="row empty">{_esc(text)}</div></div>'
 
 
 def _unavail(reason: str) -> str:
-    return f'<p class="unavail">Unavailable — {_esc(reason)}</p>'
+    return _empty(f"Unavailable — {reason}")
+
+
+def _link_or_text(html_title: str, url: str, cls: str) -> str:
+    """A title is an anchor only when there is somewhere to go. plan.safe_url
+    already blanks a `javascript:` source, so an unlinkable title must still
+    render -- as text."""
+    if url:
+        return f'<a class="{cls}" href="{_esc(url)}" rel="noopener noreferrer">{html_title}</a>'
+    return f'<span class="{cls}">{html_title}</span>'
 
 
 def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
                  stats: dict, tldr: str) -> str:
     """Render collected sections straight into the design's layout.
 
-    Ported from Danny's "Daily brief app template" (claude.ai/design). Every
-    element in that mock is generated from real data here, and every section
-    keeps the ok/empty/failed distinction the mock had no reason to carry.
+    Ported from Danny's "Daily Brief HIG" design file. Every element in that
+    mock is generated from real data here, and every section keeps the
+    ok/empty/failed distinction the mock had no reason to carry.
     """
     import netlib
     import plan as P
@@ -1174,183 +1229,200 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
 
     B: list[str] = []
 
+    if tldr:
+        B.append(_section(f'<p class="lede">{_esc(tldr)}</p>'))
     for note in notices:
-        B.append(f'<div class="notice">{_esc(note)}</div>')
+        B.append(_section(
+            f'<div class="notice"><span class="dot"></span><span>{_esc(note)}</span></div>'
+        ))
 
-    # --- Today: place line + weather ----------------------------------------
-    B.append(_sect("Today"))
-    loc_label = ((cfg.get("location") or {}).get("label") or "").split(",")[0]
-    B.append(f'<p class="placeline">{_esc(loc_label or "Location not set")} · '
-             f'{dt.datetime.now():%H:%M}</p>')
+    # --- Weather -------------------------------------------------------------
+    # The design's first card carries no header: it sits straight under the
+    # large title, and the place line has moved up into that title's subtitle.
+    bh = secs.get("bankholiday")
+    bh_note = ""
+    if bh is not None and bh.usable:
+        d = bh.data
+        bh_note = _note(f'<strong>{_esc(d["title"])}</strong> bank holiday '
+                        f'{_esc(_when_phrase(d["days"]))} ({d["date"]:%a %d %b}).')
+
     w = secs.get("weather")
     if w is not None and w.usable:
         d = w.data
         u = d.get("units") or S.units_from(cfg.get("units"))
-        deg, unit_letter = "°", u["temperature_symbol"].lstrip("°")
-        stats_bits = [
-            ("High / low", f"{S.fmt(d['high'], deg)} / {S.fmt(d['low'], deg)}"),
-            ("Rain", S.fmt(d["precip_prob"], "%")),
-            ("Wind", S.fmt(d["wind_mph"], u["wind_symbol"])),
-        ]
-        if d.get("sunrise") and d.get("sunset"):
-            stats_bits.append(("Sun", f"{d['sunrise']} – {d['sunset']}"))
-        cells = "".join(
-            f'<div class="wx-stat"><span class="k">{_esc(k)}</span>'
-            f'<span class="v">{_esc(v)}</span></div>' for k, v in stats_bits
-        )
+        unit_letter = u["temperature_symbol"].lstrip("°")
         now_n = S.fmt(d["now_temp"]) if d.get("now_temp") is not None else S.fmt(d["high"])
-        B.append(
-            f'<div class="wx"><div class="wx-now"><span class="n">{_esc(now_n)}</span>'
-            f'<span class="u">°{_esc(unit_letter)}</span></div>'
-            f'<div class="wx-stats">{cells}</div></div>'
-        )
         cond = d.get("condition") or ""
         now_cond = d.get("now_condition") or ""
-        line = cond + (f". Currently {now_cond.lower()}." if now_cond and now_cond != cond else ".")
-        B.append(f'<p class="wx-cond">{_esc(line)}</p>')
+        # High/low and the "currently ..." detail share the right-hand block --
+        # exactly where the design puts its two-line summary.
+        right = [f'H:{S.fmt(d["high"], "°")} L:{S.fmt(d["low"], "°")}']
+        if now_cond and now_cond != cond:
+            right.append(f"Currently {now_cond.lower()}")
+        stats_bits = [
+            ("Rain", _esc(S.fmt(d["precip_prob"], "%"))),
+            ("Wind", _esc(S.fmt(d["wind_mph"], u["wind_symbol"]))),
+        ]
+        # The mock shows sunset alone in its third cell; both times are real
+        # data here and both fit the column, so neither is thrown away. Each
+        # time is unbreakable and only the pair may wrap: on a 360px phone set
+        # to a 12-hour clock the cell is narrower than "5:58am-8:54pm", and
+        # `overflow-wrap: anywhere` would otherwise split it mid-time.
+        if d.get("sunrise") and d.get("sunset"):
+            stats_bits.append(("Sun", f'<span class="nb">{_esc(d["sunrise"])}</span>–'
+                                      f'<wbr><span class="nb">{_esc(d["sunset"])}</span>'))
+        cells = "".join(
+            f'<div class="wx-stat"><span class="k">{_esc(k)}</span>'
+            f'<span class="v">{v}</span></div>' for k, v in stats_bits
+        )
+        B.append(_section(
+            '<div class="card wx"><div class="wx-top"><div>'
+            + (f'<p class="wx-cond">{_esc(cond)}</p>' if cond else "")
+            + f'<div class="wx-now"><span class="n">{_esc(now_n)}</span>'
+              f'<span class="u">°{_esc(unit_letter)}</span></div></div>'
+            + f'<p class="wx-hl">{"<br>".join(_esc(x) for x in right)}</p></div>'
+            + f'<div class="wx-stats">{cells}</div></div>',
+            bh_note,
+        ))
     elif w is not None:
-        B.append(_unavail(w.reason))
-
-    bh = secs.get("bankholiday")
-    if bh is not None and bh.usable:
-        d = bh.data
-        when = _when_phrase(d["days"])
-        B.append(f'<p class="wx-cond"><strong>{_esc(d["title"])}</strong> bank holiday '
-                 f'{_esc(when)} ({d["date"]:%a %d %b}).</p>')
+        B.append(_section(_unavail(w.reason), bh_note, title="Weather"))
+    elif bh_note:
+        B.append(_section(bh_note))
 
     # --- Calendar ------------------------------------------------------------
     cal = secs.get("calendar")
     if cal is not None:
-        B.append(_sect("Calendar"))
         if cal.usable:
             rows = []
             for ev in cal.data:
-                warn = f' <span class="t">[{_esc("; ".join(ev["warnings"]))}]</span>' if ev.get("warnings") else ""
                 meta_bits = [b for b in (ev.get("calendar"),) if b]
                 if ev["all_day"]:
-                    s_txt, e_txt = "all day", ""
+                    s_txt, e_txt = "All day", ""
                     if ev.get("last_day") and ev["last_day"] != today:
                         e_txt = f"to {ev['last_day']:%d %b}"
                         meta_bits.append("multi-day")
-                    dim = " dim" if e_txt else ""
+                    bar = " allday"
                 else:
                     s_txt = f"{ev['start']:%H:%M}"
                     e_txt = f"{ev['end']:%H:%M}" if ev.get("end") else ""
                     dur = _duration_text(ev.get("start"), ev.get("end"))
                     if dur:
                         meta_bits.append(dur)
-                    dim = ""
+                    bar = ""
+                # A warning is why a row may be wrong; it belongs on the row,
+                # and the meta line is the only place the design has for it.
+                if ev.get("warnings"):
+                    meta_bits.append("; ".join(ev["warnings"]))
                 meta = " · ".join(meta_bits)
                 rows.append(
-                    f'<div class="tl-row"><span class="tl-times">'
+                    '<div class="row ev"><span class="ev-time">'
                     f'<span class="s">{_esc(s_txt)}</span>'
                     + (f'<span class="e">{_esc(e_txt)}</span>' if e_txt else "")
-                    + f'</span><span class="tl-bar{dim}"></span>'
-                    f'<span class="tl-body"><span class="tl-title">{_esc(ev["summary"] or "(no title)")}{warn}</span>'
-                    + (f'<span class="tl-meta">{_esc(meta)}</span>' if meta else "")
+                    + f'</span><span class="ev-bar{bar}"></span>'
+                    f'<span class="body"><span class="t">{_esc(ev["summary"] or "(no title)")}</span>'
+                    + (f'<span class="m">{_esc(meta)}</span>' if meta else "")
                     + "</span></div>"
                 )
-            B.append(f'<div class="tl">{"".join(rows)}</div>')
-            if cal.reason:
-                B.append(f'<p class="unavail">{_esc(cal.reason)}</p>')
+            B.append(_section(f'<div class="list">{"".join(rows)}</div>',
+                              _note(_esc(cal.reason)) if cal.reason else "",
+                              title="Calendar"))
         elif cal.status == S.EMPTY:
             if "no calendars configured" in cal.reason:
-                B.append('<p class="unavail">No calendar connected — see calendars.txt.</p>')
+                body = _empty("No calendar connected — see calendars.txt.")
             else:
-                B.append(f'<p class="unavail">Nothing scheduled.'
-                         f'{" " + _esc(cal.reason) if cal.reason else ""}</p>')
+                body = _empty("Nothing scheduled."
+                              + (" " + cal.reason if cal.reason else ""))
+            B.append(_section(body, title="Calendar"))
         else:
-            B.append(_unavail(cal.reason))
+            B.append(_section(_unavail(cal.reason), title="Calendar"))
 
     # --- 3x3 ------------------------------------------------------------------
     tx = secs.get("threexthree")
     if tx is not None:
-        B.append(_sect("3×3"))
+        parts: list[str] = []
         if tx.usable:
             st = tx.data
             blk, state = st.get("block"), st.get("block_state")
             if state == "active":
                 due = blk["due"]
-                left_txt = _days_left_text(blk["days_left"])
-                B.append(
-                    '<div class="feature"><div class="feature-meta">'
-                    f'<span class="tag tag-outline">Month {blk["number"]} of {blk["topic_count"]}'
-                    f' · week {blk["week"]}</span>'
-                    f'<span class="t">{_esc(blk["name"])} · {_esc(left_txt)}</span></div>'
-                )
+                kicker = (f'Month {blk["number"]} of {blk["topic_count"]} · week {blk["week"]}'
+                          f' · {blk["name"]} · {_days_left_text(blk["days_left"])}')
                 if due == "output":
                     done = blk["output_done"]
-                    B.append(
-                        f'<span class="feature-title">{"Output produced" if done else "Produce the output"}</span>'
-                        f'<p class="feature-body">'
+                    parts.append(
+                        f'<div class="card"><p class="kicker">{_esc(kicker)}</p>'
+                        f'<span class="card-title">'
+                        f'{"Output produced" if done else "Produce the output"}</span>'
+                        '<p class="card-body">'
                         + ("Done — this month is closed."
                            if done else
                            "Ten minutes, one sitting, no editing. Explain it as if to a friend; "
                            "where you stall is what did not land. Mark it with "
                            "<code>dailybrief.py 3x3 output</code>.")
-                        + f'</p><span class="feature-foot">Month ends {blk["month_end"]:%a %d %b}</span></div>'
+                        + f'</p><p class="card-foot">Month ends {blk["month_end"]:%a %d %b}</p></div>'
                     )
                 else:
                     src = blk["source"]
                     label = P.SLOT_LABELS.get(due, due)
                     if src:
-                        title_html = (
-                            f'<a class="feature-title" href="{_esc(src["url"])}" '
-                            f'rel="noopener noreferrer">{_esc(src["title"])}</a>'
-                            if src["url"] else
-                            f'<span class="feature-title">{_esc(src["title"])}</span>'
-                        )
+                        title_html = _link_or_text(_esc(src["title"]), src["url"], "card-title")
+                        pill = (f'<div class="actions"><a class="pill" href="{_esc(src["url"])}" '
+                                'rel="noopener noreferrer">Open</a></div>') if src["url"] else ""
                     else:
-                        title_html = ('<span class="feature-title">Nothing lined up for this '
-                                      'week\'s slot</span>')
-                    B.append(
-                        title_html
-                        + f'<p class="feature-body">This week: {_esc(label)}.'
+                        title_html = ('<span class="card-title">Nothing lined up for this '
+                                      "week's slot</span>")
+                        pill = ""
+                    parts.append(
+                        f'<div class="card"><p class="kicker">{_esc(kicker)}</p>'
+                        + title_html
+                        + f'<p class="card-body">This week: {_esc(label)}.'
                         + ("" if src else
                            " Add it with <code>dailybrief.py 3x3 topic</code> — "
                            "the week has a job and no source to do it with.")
-                        + f'</p><span class="feature-foot">Output due by '
-                          f'{blk["month_end"]:%a %d %b}</span></div>'
+                        + f'</p><p class="card-foot">Output due by '
+                          f'{blk["month_end"]:%a %d %b}</p>{pill}</div>'
                     )
             elif state == "not_started":
-                B.append(f'<p class="wx-cond">Block starts {blk["starts"]:%a %d %b} — '
-                         f'{blk["topic_count"]} topic{"s" if blk["topic_count"] != 1 else ""} lined up.</p>')
+                parts.append(_note(f'Block starts {blk["starts"]:%a %d %b} — '
+                                   f'{blk["topic_count"]} topic'
+                                   f'{"s" if blk["topic_count"] != 1 else ""} lined up.'))
             elif state == "finished":
-                B.append(f'<p class="wx-cond"><strong>Block finished</strong> {blk["ended"]:%d %b}. '
-                         f'Pick three new topics and set a new start date.</p>')
+                parts.append(_note(f'<strong>Block finished</strong> {blk["ended"]:%d %b}. '
+                                   "Pick three new topics and set a new start date."))
 
             ses = st.get("session")
             if ses and state == "active":
                 if not ses.get("checked"):
-                    B.append(f'<p class="unavail">Session not placed — {_esc(ses["why"])}.</p>')
+                    parts.append(_note(f'Session not placed — {_esc(ses["why"])}.'))
                 elif ses.get("found"):
                     when = _session_when(ses["start"], ses["end"], today)
                     taken = ", ".join(f'{t} {s.astimezone():%H:%M}' for s, _e, t in ses["clashes"][:2])
-                    note = f' Around {_esc(taken)}.' if taken else ""
+                    tail = f" Around {_esc(taken)}." if taken else ""
                     if ses.get("all_day"):
-                        note += f' Note: {_esc(", ".join(ses["all_day"][:2]))} all day.'
+                        tail += f' Note: {_esc(", ".join(ses["all_day"][:2]))} all day.'
                     if ses.get("caveat"):
-                        note += f' <em>{_esc(ses["caveat"])}.</em>'
-                    B.append(f'<p class="wx-cond"><strong>Session {_esc(when)}</strong> '
-                             f'({ses["minutes"]} min, free in your calendar).{note}</p>')
+                        tail += f' {_esc(ses["caveat"])}.'
+                    parts.append(_note(f'<strong>Session {_esc(when)}</strong> '
+                                       f'({ses["minutes"]} min, free in your calendar).{tail}'))
                 else:
-                    tail = f' <em>{_esc(ses["caveat"])}.</em>' if ses.get("caveat") else ""
-                    B.append(f'<p class="wx-cond"><strong>No free {ses["minutes"]}-minute window'
-                             f'</strong> before {ses["until"]:%a %d %b}. '
-                             f'Something has to give — or shorten the session.{tail}</p>')
+                    tail = f' {_esc(ses["caveat"])}.' if ses.get("caveat") else ""
+                    parts.append(_note(f'<strong>No free {ses["minutes"]}-minute window</strong> '
+                                       f'before {ses["until"]:%a %d %b}. '
+                                       f"Something has to give — or shorten the session.{tail}"))
 
             wk = st["weekly"]
             if wk["changes"]:
                 rows = []
                 for i, change in enumerate(wk["changes"], 1):
+                    stale = (f'week of {wk["week_of"]:%d %b}'
+                             if wk["stale"] and wk["week_of"] else "")
                     rows.append(
-                        f'<div class="story"><span class="tag tag-accent">{i}</span>'
-                        f'<span>{_esc(change)}'
-                        + (f'<span class="t">week of {wk["week_of"]:%d %b}</span>'
-                           if wk["stale"] and wk["week_of"] else "")
+                        f'<div class="row n3"><span class="num">{i}</span>'
+                        f'<span class="body"><span class="t">{_esc(change)}</span>'
+                        + (f'<span class="m">{_esc(stale)}</span>' if stale else "")
                         + "</span></div>"
                     )
-                B.append(f'<div class="stories">{"".join(rows)}</div>')
+                parts.append(f'<div class="list">{"".join(rows)}</div>')
             if wk["review_due"]:
                 if not wk["changes"]:
                     prompt = "No three on file. Pick three changes for the week"
@@ -1359,39 +1431,40 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
                               "three new ones")
                 else:
                     prompt = f"{wk['review_day'].title()} review — score these and pick three new ones"
-                B.append(f'<p class="wx-cond"><strong>{_esc(prompt)}:</strong> '
-                         f'<code>dailybrief.py 3x3 week "..." "..." "..."</code></p>')
+                parts.append(_note(f'<strong>{_esc(prompt)}:</strong> '
+                                   '<code>dailybrief.py 3x3 week "..." "..." "..."</code>'))
             if tx.reason:
-                B.append(f'<p class="unavail">{_esc(tx.reason)}</p>')
+                parts.append(_note(_esc(tx.reason)))
         elif tx.status == S.EMPTY:
-            B.append(f'<p class="unavail">{_esc(tx.reason)}</p>')
+            parts.append(_empty(tx.reason))
         else:
-            B.append(_unavail(tx.reason))
+            parts.append(_unavail(tx.reason))
+        B.append(_section(*parts, title="3×3"))
 
     # --- Feed sections (Headlines, Audio & DSP, ...) -------------------------
     titles = dict(DEFAULT_SECTION_TITLES, **(cfg.get("section_titles") or {}))
-    tag_class = {"news": "tag-outline"}
     for section in S.feed_sections(cfg):
         sec = secs.get(f"feed:{section}")
         if sec is None:
             continue
-        B.append(_sect(titles.get(section, section.replace("-", " ").title())))
+        title = titles.get(section, section.replace("-", " ").title())
+        dot = SECTION_DOT.get(section, "tint")
         if sec.usable:
             rows = []
             for it in sec.data:
                 when = f"{it.when.astimezone():%H:%M}" if it.when else ""
-                cls = tag_class.get(section, "tag-neutral")
+                meta = " · ".join(x for x in (it.source, when) if x)
                 rows.append(
-                    f'<div class="story"><span class="tag {cls}">{_esc(it.source)}</span>'
-                    f'<span><a href="{_esc(it.link)}" rel="noopener noreferrer">{_esc(it.title)}</a>'
-                    + (f'<span class="t">{_esc(when)}</span>' if when else "")
-                    + "</span></div>"
+                    f'<a class="row story" href="{_esc(it.link)}" rel="noopener noreferrer">'
+                    f'<span class="body"><span class="t">{_esc(it.title)}</span>'
+                    + (f'<span class="m">{_esc(meta)}</span>' if meta else "")
+                    + '</span><span class="chev">›</span></a>'
                 )
-            B.append(f'<div class="stories">{"".join(rows)}</div>')
-            if sec.reason:
-                B.append(f'<p class="unavail">partial: {_esc(sec.reason)}</p>')
+            B.append(_section(f'<div class="list">{"".join(rows)}</div>',
+                              _note(f"partial: {_esc(sec.reason)}") if sec.reason else "",
+                              title=title, dot=dot))
         else:
-            B.append(_unavail(sec.reason))
+            B.append(_section(_unavail(sec.reason), title=title, dot=dot))
 
     # --- Tech (HN) -----------------------------------------------------------
     techs = secs.get("tech")
@@ -1399,27 +1472,30 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
         # Literal, not titles.get("tech"): compose_markdown hardcodes `## Tech`,
         # so honouring a section_titles override here alone would make the two
         # renderers disagree. Change both or neither.
-        B.append(_sect("Tech"))
+        dot = SECTION_DOT["tech"]
         if techs.usable:
             rows = []
             for it in techs.data[: int(cfg.get("tech_items", 2))]:
-                points = _esc(it.source.replace("HN ", ""))
+                points = it.source.replace("HN ", "").strip()
                 host = netlib.urlsplit_host(it.link)
+                meta = " · ".join(x for x in (host, f"{points} points" if points else "") if x)
                 rows.append(
-                    f'<div class="story"><span class="tag tag-accent">{points}</span>'
-                    f'<span><a href="{_esc(it.link)}" rel="noopener noreferrer">{_esc(it.title)}</a>'
-                    f'<span class="t host">{_esc(host)}</span></span></div>'
+                    f'<a class="row story" href="{_esc(it.link)}" rel="noopener noreferrer">'
+                    f'<span class="body"><span class="t">{_esc(it.title)}</span>'
+                    + (f'<span class="m">{_esc(meta)}</span>' if meta else "")
+                    + '</span><span class="chev">›</span></a>'
                 )
-            B.append(f'<div class="stories">{"".join(rows)}</div>')
+            B.append(_section(f'<div class="list">{"".join(rows)}</div>', title="Tech", dot=dot))
         elif techs.status == S.EMPTY:
-            B.append(f'<p class="unavail">Nothing above the score threshold ({_esc(techs.reason)}).</p>')
+            B.append(_section(
+                _empty(f"Nothing above the score threshold ({techs.reason})."),
+                title="Tech", dot=dot))
         else:
-            B.append(_unavail(techs.reason))
+            B.append(_section(_unavail(techs.reason), title="Tech", dot=dot))
 
     # --- Paper of the day ----------------------------------------------------
     pap = secs.get("paper")
     if pap is not None:
-        B.append(_sect("Paper of the day"))
         if pap.usable:
             d = pap.data
             when = f"{d['published'].astimezone():%a %d %b}" if d.get("published") else ""
@@ -1427,55 +1503,53 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
             # A cached paper is still worth reading, but it is not today's, and
             # the brief must never let those two look identical.
             stale = pap.detail.get("stale")
-            B.append(
-                '<div class="feature">'
-                f'<div class="feature-meta"><span class="tag tag-outline">arXiv</span>'
-                f'<span class="t">{_esc(d["id"])} · {_esc(d["category"])} · '
-                f'~{d["read_minutes"]} min abstract'
-                + (f' · {_esc(stale)}' if stale else '')
-                + '</span></div>'
-                f'<a class="feature-title" href="{_esc(d["link"])}" rel="noopener noreferrer">{_esc(d["title"])}</a>'
-                f'<p class="feature-body">Abstract — {_esc(d["abstract"])}</p>'
-                f'<span class="feature-foot">{_esc(authors)}'
-                + (f" · submitted {_esc(when)}" if when else "") + "</span></div>"
-            )
+            kicker = (f'arXiv {d["id"]} · {d["category"]} · ~{d["read_minutes"]} min abstract'
+                      + (f" · {stale}" if stale else ""))
+            byline = _esc(authors) + (f" · submitted {_esc(when)}" if when else "")
+            B.append(_section(
+                f'<div class="card"><p class="kicker">{_esc(kicker)}</p>'
+                f'<a class="card-title" href="{_esc(d["link"])}" '
+                f'rel="noopener noreferrer">{_esc(d["title"])}</a>'
+                f'<p class="card-body">Abstract — {_esc(d["abstract"])}</p>'
+                f'<div class="actions"><a class="pill" href="{_esc(d["link"])}" '
+                'rel="noopener noreferrer">Read</a>'
+                f'<span class="byline">{byline}</span></div></div>',
+                title="Paper of the day"))
         elif pap.status == S.EMPTY:
-            B.append(f'<p class="unavail">{_esc(pap.reason)}</p>')
+            B.append(_section(_empty(pap.reason), title="Paper of the day"))
         else:
-            B.append(_unavail(pap.reason))
+            B.append(_section(_unavail(pap.reason), title="Paper of the day"))
 
     # --- News of the day -----------------------------------------------------
     feat = secs.get("featured")
     if feat is not None:
-        B.append(_sect("News of the day"))
         if feat.usable:
             d = feat.data
-            read = f" · ~{d['read_minutes']} min" if d.get("read_minutes") else ""
-            B.append(
-                '<div class="feature">'
-                f'<div class="feature-meta"><span class="tag tag-accent">{_esc(d["source"])}</span>'
-                f'<span class="t">{d["when"].astimezone():%a %d %b}{read}</span></div>'
-                if d.get("when") else
-                '<div class="feature">'
-                f'<div class="feature-meta"><span class="tag tag-accent">{_esc(d["source"])}</span></div>'
-            )
-            B.append(
-                f'<a class="feature-title" href="{_esc(d["link"])}" rel="noopener noreferrer">{_esc(d["title"])}</a>'
-                + (f'<p class="feature-body">{_esc(d["summary"])}</p>' if d.get("summary") else "")
-                + "</div>"
-            )
+            bits = [d["source"]]
+            if d.get("when"):
+                bits.append(f'{d["when"].astimezone():%a %d %b}')
+            if d.get("read_minutes"):
+                bits.append(f'~{d["read_minutes"]} min')
+            B.append(_section(
+                f'<div class="card"><p class="kicker">{_esc(" · ".join(bits))}</p>'
+                f'<a class="card-title" href="{_esc(d["link"])}" '
+                f'rel="noopener noreferrer">{_esc(d["title"])}</a>'
+                + (f'<p class="card-body">{_esc(d["summary"])}</p>' if d.get("summary") else "")
+                + "</div>",
+                title="News of the day"))
         else:
-            B.append(_unavail(feat.reason))
+            B.append(_section(_unavail(feat.reason), title="News of the day"))
 
     # --- On this day ----------------------------------------------------------
     otd = secs.get("onthisday")
     if otd is not None:
-        B.append(_sect("On this day"))
         if otd.usable:
-            B.append(f'<p class="otd"><span class="yr">{_esc(otd.data["year"])}</span> — '
-                     f'{_esc(otd.data["text"])}</p>')
+            B.append(_section(
+                f'<div class="otd"><p><span class="yr">{_esc(otd.data["year"])}</span> — '
+                f'{_esc(otd.data["text"])}</p></div>',
+                title="On this day"))
         else:
-            B.append(_unavail(otd.reason))
+            B.append(_section(_unavail(otd.reason), title="On this day"))
 
     # --- Status footer --------------------------------------------------------
     total = len(secs)
@@ -1495,16 +1569,19 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
     )
     if stats.get("engine", "local") == "local" and not has_cal_url:
         bits.append("no credentials")
-    dot = ' bad"' if broken else '"'
-    B.append(f'<div class="foot"><span class="dot{dot}></span><span>{_esc(" · ".join(bits))}</span></div>')
+    B.append(_section(f'<p class="status{" bad" if broken else ""}">'
+                      f'{_esc(" · ".join(bits))}</p>'))
 
     heading = today.strftime("%A %d %B")
-    lede_html = f'<p class="lede">{_esc(tldr)}</p>' if tldr else ""
+    loc_label = ((cfg.get("location") or {}).get("label") or "").split(",")[0]
+    subtitle = (f'<p>{_esc(loc_label or "Location not set")} · '
+                f'{dt.datetime.now():%H:%M}</p>')
     return netlib.scrub(PAGE.format(
-        topbar=TOPBAR_HTML,
+        nav=NAV_HTML,
+        sticky=NAV_STICKY,
         title=_esc(f"Daily Brief - {heading}"),
         heading=_esc(heading),
-        lede=lede_html,
+        subtitle=subtitle,
         body="\n".join(B),
         generated=dt.datetime.now().isoformat(timespec="seconds"),
     ))

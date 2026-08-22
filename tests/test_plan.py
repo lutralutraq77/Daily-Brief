@@ -587,7 +587,7 @@ html3 = db.compose_page(CFG, dt.date(2026, 9, 17), {"threexthree": S.Section(
     "threexthree", S.OK, data=P.status(full, dt.date(2026, 9, 17)))}, [], {}, "")
 check("week 3 names its source", "A Course" in html3)
 check("a source with no url renders unlinked",
-      '<span class="feature-title">A Course</span>' in html3)
+      '<span class="card-title">A Course</span>' in html3)
 
 # Week 4 renders the output job, not a phantom source.
 w4 = {"threexthree": S.Section("threexthree", S.OK, data=P.status(full, dt.date(2026, 9, 24)))}

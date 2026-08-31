@@ -194,6 +194,35 @@ check("every DEFAULT_FEEDS section is enabled by default",
 check("every default feed has a title",
       all(s in db.DEFAULT_SECTION_TITLES for s in _feed_sections))
 check("default feeds all normalise", all(S.normalise_feed(f) for f in S.DEFAULT_FEEDS))
+check("every default feed section has an accent dot",
+      all(s in db.SECTION_DOT for s in _feed_sections))
+# Two sections may share a dot colour, but never two that render next to each
+# other -- adjacent identical dots read as one section split in half.
+_order = [s for s in S.feed_sections({})]
+_dots = [db.SECTION_DOT.get(s, "tint") for s in _order]
+check("no two adjacent default sections share a dot colour",
+      all(a != b for a, b in zip(_dots, _dots[1:])))
+
+# --- a config written before a section existed still gets it ------------------
+# _save_cfg writes the whole merged config, so `sections` is frozen on the day
+# of setup. Without this, every existing install would keep fetching a newly
+# added feed and silently drop it -- the same failure as above, one upgrade
+# later instead of on a fresh install.
+_stale = {"sections": [s for s in db.DEFAULT_CONFIG["sections"] if s != "climate"],
+          "feeds": None}
+db._adopt_new_default_sections(_stale)
+check("a config predating a section adopts it", "climate" in _stale["sections"])
+check("adopted section keeps the default position",
+      _stale["sections"] == list(db.DEFAULT_CONFIG["sections"]))
+# `sources disable` materialises `feeds` before it drops the section, so a
+# config carrying its own feeds has made its choices deliberately.
+_customised = {"sections": ["weather", "news"],
+               "feeds": [{"name": "BBC", "url": "https://x.tld", "section": "news"}]}
+db._adopt_new_default_sections(_customised)
+check("a customised config is left alone", _customised["sections"] == ["weather", "news"])
+_off = {"sections": [], "feeds": None}
+db._adopt_new_default_sections(_off)
+check("everything switched off stays off", _off["sections"] == [])
 
 bad_n = [k for k, v in checks.items() if not v]
 for k, v in checks.items():

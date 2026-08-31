@@ -80,8 +80,8 @@ DEFAULT_CONFIG = {
     # A feed section only renders if it is named here, so this list must stay in
     # step with the sections used by DEFAULT_FEEDS -- otherwise a fresh install
     # fetches nothing from them and the brief silently ships without them.
-    "sections": ["calendar", "threexthree", "weather", "science", "nature", "film",
-                 "tech", "paper", "featured", "onthisday", "bankholiday"],
+    "sections": ["calendar", "threexthree", "weather", "science", "climate", "nature",
+                 "film", "tech", "paper", "featured", "onthisday", "bankholiday"],
     # Paper of the day: newest arXiv submission in these categories.
     "paper_categories": ["eess.AS", "cs.SD"],
     # News of the day: one story with its standfirst, from a single-story feed.
@@ -219,7 +219,47 @@ def load_config() -> dict:
                 cfg[key] = merged
             else:
                 cfg[key] = value
+    _adopt_new_default_sections(cfg)
     return cfg
+
+
+def _adopt_new_default_sections(cfg: dict) -> None:
+    """Turn on a section this version added, when the config predates it.
+
+    `_save_cfg` writes the whole merged config, so the first run after `setup`
+    freezes `sections` as it looked that day. A section added to DEFAULT_CONFIG
+    later would then never render on an existing install -- the brief would keep
+    fetching the new feed and silently drop it on the floor, which is the exact
+    failure the DEFAULT_FEEDS/sections test guards against for fresh installs.
+
+    Only when `feeds` is untouched, which is what makes this safe: disabling a
+    section is `sources disable`, and that materialises `feeds` into the config
+    before removing the section. So a config with no `feeds` of its own has
+    never had a section deliberately turned off, and anything missing from its
+    `sections` is stale rather than declined.
+    """
+    if cfg.get("feeds") is not None:
+        return
+    import sources as S
+
+    sections = list(cfg.get("sections") or [])
+    if not sections:
+        return
+    order = list(DEFAULT_CONFIG["sections"])
+    added = [s for s in S.feed_sections({}) if s in order and s not in sections]
+    if not added:
+        return
+    for name in added:
+        # Positioned where the defaults put it, so Climate lands after Science
+        # rather than on the end, past On this day.
+        at = next((i for i, s in enumerate(sections)
+                   if s in order and order.index(s) > order.index(name)), len(sections))
+        sections.insert(at, name)
+    cfg["sections"] = sections
+    # Stated every run rather than once: nothing is written back, so this is a
+    # standing fact about the config on disk, not a one-off migration event.
+    log(f"config.json predates the {', '.join(added)} section(s); "
+        "rendering them from the defaults")
 
 
 def save_state(**kw) -> None:
@@ -538,8 +578,9 @@ NAV_STICKY = "" if _ANDROID else " sticky"
 # Section accent dots, from the design's five-colour set. Two sections may share
 # a colour, but never two that render next to each other.
 SECTION_DOT = {
-    "news": "tint", "science": "tint", "nature": "orange", "film": "pink",
-    "audio": "teal", "sport": "orange", "local": "pink", "tech": "indigo",
+    "news": "tint", "science": "tint", "climate": "teal", "nature": "orange",
+    "film": "pink", "audio": "teal", "sport": "orange", "local": "pink",
+    "tech": "indigo",
 }
 
 PAGE = """<!doctype html>
@@ -836,6 +877,7 @@ DEFAULT_SECTION_TITLES = {
     "audio": "Audio & DSP",
     "sport": "Sport",
     "science": "Science",
+    "climate": "Climate",
     "nature": "Paper of the day",
     "film": "Film & series",
     "local": "Local",

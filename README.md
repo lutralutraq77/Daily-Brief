@@ -180,11 +180,12 @@ which is exactly how Reuters, AP and KVR fail today. Use `--force` to override.
 `--section` is just a heading name. Give it one that does not exist yet and a new
 section appears in the brief, positioned in feed order and titled from
 `section_titles` (with sensible defaults for `news`, `tech`, `audio`, `sport`,
-`science`, `local`). Enabling and disabling keeps `sections` in step for you.
+`science`, `climate`, `film`, `local`). Enabling and disabling keeps `sections` in step for you.
 
 `--max-age` matters more than it looks. The default 24h is right for a news wire
 but wrong for a low-cadence blog: at 24h a weekly blog looks permanently broken.
-CDM is set to 168h (a week) for that reason.
+CDM is set to 168h (a week) for that reason, and so is Carbon Brief — it is an
+analysis desk, and the widest gap between posts measured on its feed was 146h.
 
 Feeds are also plain entries in `config.json` if you would rather edit them
 directly — RSS 2.0, Atom and RSS 1.0/RDF all parse.
@@ -285,7 +286,9 @@ what you committed to.
 |---|---|---|
 | Calendar | Your ICS feeds (see below), with end times and durations | see below |
 | Weather | Open-Meteo forecast (`timezone=auto`) | keyless |
-| Headlines | BBC + Guardian RSS, 2 each | keyless |
+| Science | Phys.org + Guardian Science RSS, 3 items | keyless |
+| Climate | Carbon Brief RSS, 2 items on a week's window — it publishes every few days, not daily | keyless |
+| Film & series | Variety + Hollywood Reporter RSS, 1 each | keyless |
 | Audio & DSP | any feeds you add via `sources add` | keyless |
 | Tech | Hacker News via Algolia, 1 request | keyless |
 | Paper of the day | newest arXiv submission in `paper_categories` (default `eess.AS`, `cs.SD`) | keyless |

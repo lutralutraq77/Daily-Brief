@@ -73,6 +73,13 @@ DEFAULT_FEEDS = [
     {"name": "Guardian Science", "url": "https://www.theguardian.com/science/rss",
      "section": "science", "max_items": 1, "max_age_hours": 24, "enabled": True},
 
+    # Climate. Carbon Brief is an analysis desk, not a wire: 12 items spanning
+    # 32 days when this was measured, and a 146h worst-case gap between posts.
+    # A 24h window would leave the section permanently empty, so it gets a week
+    # like CDM does -- longer than the widest gap actually observed.
+    {"name": "Carbon Brief", "url": "https://www.carbonbrief.org/feed/",
+     "section": "climate", "max_items": 2, "max_age_hours": 168, "enabled": True},
+
     # Paper of the day. Nature publishes weekly, so a 24h window would leave
     # this permanently empty -- it gets a week.
     # Nature's feed mixes real research with corrections and errata, and an

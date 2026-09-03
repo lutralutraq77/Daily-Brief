@@ -324,6 +324,30 @@ chrome, via the `.prose` styles.
 
 ---
 
+## Browser
+
+The brief opens in a chromeless `--app` window, so it needs a Chromium-family
+browser. The `browser` key in `config.json` chooses which:
+
+| Value | Effect |
+|---|---|
+| `"auto"` (default) | The first of **Brave, Edge, Chrome** that is installed |
+| `"brave"`, `"edge"`, `"chrome"` | Pin one. If it is not installed the brief falls back to your default browser and `status` says so |
+| `"default"` | Hand the file to your default browser, no app window |
+| a full path to an exe | Exactly that |
+
+Brave comes first under `auto` because nobody has it by accident — Edge ships
+with Windows, Brave is installed on purpose. Its **Shields** ad and tracker
+blocker is part of the browser, so every article you click through from the
+brief opens ad-free with nothing to install, nothing to keep updated, and
+nothing for a Manifest V3 change to switch off. An extension installed in Edge
+or Chrome does still apply to the app window, so `"edge"` plus uBlock Origin
+works too; Brave is just the path with no extra step. Brave asks the same
+"Open pythonw?" question as Edge on the first Refresh click; tick *always
+allow* once.
+
+The window's size is `window_size`, given as `"width,height"`.
+
 ## How it runs
 
 A per-user Scheduled Task named **Daily Brief** runs `pythonw.exe dailybrief.py run`

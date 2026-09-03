@@ -195,6 +195,52 @@ check("every default feed has a title",
       all(s in db.DEFAULT_SECTION_TITLES for s in _feed_sections))
 check("default feeds all normalise", all(S.normalise_feed(f) for f in S.DEFAULT_FEEDS))
 
+# --- find_browser: Brave must actually be reachable under "auto" -------------
+# Edge ships with every Windows install, so any auto order that checks Edge
+# before Brave can never pick Brave -- the setting would be dead on arrival.
+import os as _os
+import tempfile as _tempfile
+import platform_shim as _ps
+
+with _tempfile.TemporaryDirectory() as _tmp:
+    _pf = Path(_tmp) / "pf"
+    _pf86 = Path(_tmp) / "pf86"
+    _lad = Path(_tmp) / "lad"
+    _brave = _pf / "BraveSoftware/Brave-Browser/Application/brave.exe"
+    _edge = _pf86 / "Microsoft/Edge/Application/msedge.exe"
+    for _exe in (_brave, _edge):
+        _exe.parent.mkdir(parents=True, exist_ok=True)
+        _exe.write_bytes(b"MZ")
+    _saved_env = {k: _os.environ.get(k) for k in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")}
+    _saved_platform = _ps.PLATFORM
+    try:
+        _os.environ["ProgramFiles"] = str(_pf)
+        _os.environ["ProgramFiles(x86)"] = str(_pf86)
+        _os.environ["LOCALAPPDATA"] = str(_lad)
+        _ps.PLATFORM = "windows"
+        check("find_browser: auto prefers Brave over Edge", db.find_browser({"browser": "auto"}) == str(_brave))
+        check("find_browser: missing key means auto", db.find_browser({}) == str(_brave))
+        check("find_browser: 'edge' pins Edge", db.find_browser({"browser": "edge"}) == str(_edge))
+        check("find_browser: 'Brave' is case-insensitive", db.find_browser({"browser": "Brave"}) == str(_brave))
+        check("find_browser: pinned but absent -> None, not another browser",
+              db.find_browser({"browser": "chrome"}) is None)
+        check("find_browser: 'default' -> None", db.find_browser({"browser": "default"}) is None)
+        check("find_browser: explicit path wins", db.find_browser({"browser": str(_edge)}) == str(_edge))
+        check("find_browser: unknown name -> None", db.find_browser({"browser": "netscape"}) is None)
+        _brave.unlink()
+        check("find_browser: auto falls through to Edge without Brave",
+              db.find_browser({"browser": "auto"}) == str(_edge))
+        check("find_browser: every BROWSERS entry covers every platform",
+              all(set(v) == {"windows", "linux", "macos"} for v in db.BROWSERS.values()))
+        check("find_browser: brave is first in auto order", next(iter(db.BROWSERS)) == "brave")
+    finally:
+        _ps.PLATFORM = _saved_platform
+        for _k, _v in _saved_env.items():
+            if _v is None:
+                _os.environ.pop(_k, None)
+            else:
+                _os.environ[_k] = _v
+
 bad_n = [k for k, v in checks.items() if not v]
 for k, v in checks.items():
     print(("  PASS " if v else "  FAIL ") + k)

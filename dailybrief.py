@@ -1936,26 +1936,74 @@ def send_toast(title: str, body: str, *, launch: str = LAUNCH_URI, attribution: 
     )
 
 
+# Chromium-family browsers that honour --app= (a chromeless window). The table
+# order is the "auto" preference. Brave sits first because nobody has it by
+# accident: it is installed on purpose, usually for Shields, its built-in ad and
+# tracker blocker. Shields applies to every article clicked through from the
+# brief, and to the brief's own window, with no extension to install or keep
+# alive. Edge ships with every Windows install, so it is the floor rather than
+# the choice.
+BROWSERS: dict[str, dict[str, tuple[str, ...]]] = {
+    "brave": {
+        "windows": ("BraveSoftware/Brave-Browser/Application/brave.exe",),
+        "linux": ("brave", "brave-browser", "brave-browser-stable"),
+        "macos": ("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",),
+    },
+    "edge": {
+        "windows": ("Microsoft/Edge/Application/msedge.exe",),
+        "linux": ("microsoft-edge", "microsoft-edge-stable"),
+        "macos": ("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",),
+    },
+    "chrome": {
+        "windows": ("Google/Chrome/Application/chrome.exe",),
+        "linux": ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"),
+        "macos": ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",),
+    },
+}
+
+
+def _browser_candidates(name: str) -> list[Path]:
+    """Every place a named browser could be on this platform, in check order."""
+    spec = BROWSERS[name]
+    if platform_shim.PLATFORM == "windows":
+        roots = [
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            os.environ.get("LOCALAPPDATA", ""),
+        ]
+        return [Path(r) / rel for r in roots if r for rel in spec["windows"]]
+    if platform_shim.PLATFORM == "macos":
+        found = [Path(p) for p in spec["macos"]]
+        found += [Path(w) for w in map(shutil.which, spec["linux"]) if w]
+        return found
+    return [Path(w) for w in map(shutil.which, spec["linux"]) if w]
+
+
 def find_browser(cfg: dict) -> str | None:
-    configured = cfg.get("browser", "auto")
-    if configured and configured not in ("auto", "default") and Path(configured).exists():
-        return configured
-    if configured == "default":
+    """Resolve the `browser` setting to an executable, or None for the system default.
+
+    Accepts "auto" (first of BROWSERS that is installed), "default" (hand the
+    file to the OS), one of the BROWSERS names ("brave", "edge", "chrome"), or a
+    full path to an executable. A named browser that is not installed resolves
+    to None rather than a different browser: the user pinned it, so swapping in
+    another silently would be a surprise, and `status` shows what happened.
+    """
+    configured = str(cfg.get("browser", "auto") or "auto").strip()
+    key = configured.lower()
+    if key == "default":
         return None
-    pf, pf86, lad = (
-        os.environ.get("ProgramFiles", r"C:\Program Files"),
-        os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
-        os.environ.get("LOCALAPPDATA", ""),
-    )
-    for cand in (
-        Path(pf86) / "Microsoft/Edge/Application/msedge.exe",
-        Path(pf) / "Microsoft/Edge/Application/msedge.exe",
-        Path(pf) / "Google/Chrome/Application/chrome.exe",
-        Path(pf86) / "Google/Chrome/Application/chrome.exe",
-        Path(lad) / "Google/Chrome/Application/chrome.exe" if lad else Path("/nonexistent"),
-    ):
-        if cand.exists():
-            return str(cand)
+    if key == "auto":
+        names = list(BROWSERS)
+    elif key in BROWSERS:
+        names = [key]
+    elif Path(configured).exists():
+        return configured
+    else:
+        return None
+    for name in names:
+        for cand in _browser_candidates(name):
+            if cand.is_file():
+                return str(cand)
     return None
 
 
@@ -1987,6 +2035,8 @@ def open_brief(cfg: dict | None = None, path: Path | None = None) -> None:
             return
         except OSError as exc:
             log(f"WARN: app-window launch failed ({exc}); falling back to default handler")
+    elif str(cfg.get("browser", "auto")).strip().lower() not in ("auto", "default"):
+        log(f"WARN: browser {cfg.get('browser')!r} not found; falling back to default handler")
     platform_shim.open_path(target, log=log)
 
 
@@ -2783,7 +2833,7 @@ def cmd_status(_args) -> int:
     if effective == "claude":
         print(f"model       : {cfg.get('model')}")
         print(f"prompt      : {BASE / cfg.get('prompt_file', 'prompt.md')}")
-    print(f"browser     : {find_browser(cfg) or 'system default'}")
+    print(f"browser     : {find_browser(cfg) or 'system default'} ({cfg.get('browser', 'auto')})")
     print(f"last run    : {state.get('last_run', 'never')} ({state.get('last_status', '-')})")
     if state.get("last_error"):
         print(f"last error  : {state['last_error']}")

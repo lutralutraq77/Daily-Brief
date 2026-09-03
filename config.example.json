@@ -80,7 +80,7 @@
   "_threexthree": "The 3x3 plan -- this week's three changes and this month's topic. Reads plan.json (see plan.example.json, or run `dailybrief.py 3x3 init`). It is the one section that needs no network, so it still renders on a morning the feeds are down.",
   "_feeds": "Manage with `dailybrief.py sources list|add|edit|remove|enable|disable|test` -- `add` fetches and parses the feed before saving, so a dead source cannot be added silently. Editing by hand works too. Each entry: name, url, section (the heading it appears under), max_items, max_age_hours (items older than this are ignored), enabled. Reuters and AP RSS are DEAD; CNN returns 200 but has been frozen since 2023.",
   "_section_titles": "Override a section heading, e.g. {\"audio\": \"Audio & DSP\"}. Sensible defaults exist for news, tech, audio, sport, science and local.",
-  "_browser": "\"auto\" picks Edge/Chrome for a chromeless app window; \"default\" uses your default browser; or give a full path to an exe.",
+  "_browser": "\"auto\" opens a chromeless app window in the first of Brave, Edge, Chrome that is installed; \"brave\" | \"edge\" | \"chrome\" pins one; \"default\" uses your default browser; or give a full path to an exe. Brave's built-in Shields ad-blocker then covers every article you click through to -- no extension needed.",
   "_claude": "Only used when engine is claude/auto. Tools are empty because the data is already fetched -- Claude writes, it does not research.",
   "calendar_emails": [],
   "paper_categories": [

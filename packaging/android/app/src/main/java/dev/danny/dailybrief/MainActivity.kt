@@ -216,7 +216,7 @@ private fun RootScreen() {
                     },
                 )
 
-                tab == Tab.PLAN -> PlanScreen()
+                tab == Tab.PLAN -> PlanScreen(previews = status.previews)
                 tab == Tab.CALENDARS -> CalendarsScreen()
 
                 status.hasBrief -> Column(Modifier.fillMaxSize()) {

@@ -9,7 +9,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SUITES = ["test_render.py", "test_hardening.py", "test_location.py", "test_ics.py",
-          "test_plan.py"]
+          "test_plan.py", "test_previews.py"]
 
 failed = []
 for suite in SUITES:

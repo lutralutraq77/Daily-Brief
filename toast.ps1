@@ -49,7 +49,7 @@ try {
     $xmlText = '<toast' + $launchAttr + ' duration="long">' +
                '<visual><binding template="ToastGeneric">' +
                '<text>' + (Esc $Title) + '</text>' +
-               '<text>' + (Esc $Body) + '</text>' +
+               '<text hint-maxLines="4">' + (Esc $Body) + '</text>' +
                $imageEl + $attrEl +
                '</binding></visual>' +
                '<audio src="ms-winsoundevent:Notification.Default"/>' +

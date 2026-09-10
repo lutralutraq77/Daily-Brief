@@ -14,7 +14,34 @@ data class BriefStatus(
     val hasBrief: Boolean = false,
     val latest: String = "",
     val generatedAt: Long = 0L,
+    val previews: ReadingPreviews = ReadingPreviews(),
 )
+
+data class ReadingPreview(
+    val title: String = "",
+    val summary: String = "",
+    val url: String = "",
+    val source: String = "",
+    val published: String = "",
+    val note: String = "",
+)
+
+data class ReadingPreviews(
+    val date: String = "",
+    val paper: ReadingPreview = ReadingPreview(),
+    val climate: ReadingPreview = ReadingPreview(),
+) {
+    companion object {
+        fun fromJson(value: JSONObject?): ReadingPreviews {
+            fun card(key: String): ReadingPreview {
+                val o = value?.optJSONObject(key) ?: return ReadingPreview()
+                return ReadingPreview(o.optString("title"), o.optString("summary"),
+                    o.optString("url"), o.optString("source"), o.optString("published"), o.optString("note"))
+            }
+            return ReadingPreviews(value?.optString("date").orEmpty(), card("paper"), card("climate"))
+        }
+    }
+}
 
 /**
  * [busy] is a third state, not a failure: another run already holds the Python
@@ -27,6 +54,7 @@ data class RunResult(
     val sections: String = "",
     val latest: String = "",
     val error: String? = null,
+    val previews: ReadingPreviews = ReadingPreviews(),
 )
 
 /**
@@ -54,6 +82,7 @@ object Brief {
             hasBrief = o.optBoolean("has_brief"),
             latest = o.optString("latest"),
             generatedAt = (o.optDouble("generated_at", 0.0) * 1000).toLong(),
+            previews = ReadingPreviews.fromJson(o.optJSONObject("previews")),
         )
     }
 
@@ -79,6 +108,7 @@ object Brief {
             sections = o.optString("sections"),
             latest = o.optString("latest"),
             error = if (o.has("error")) o.optString("error") else null,
+            previews = ReadingPreviews.fromJson(o.optJSONObject("previews")),
         )
     }
 }

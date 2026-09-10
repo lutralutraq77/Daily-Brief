@@ -194,6 +194,19 @@ directly — RSS 2.0, Atom and RSS 1.0/RDF all parse.
 
 ## The 3×3 plan
 
+The app's 3×3 tab starts with a **Daily · Read & explore** section: your paper's
+abstract and the first climate article from the brief, with source, publication
+date, expandable summaries and reading buttons. Weekly changes and monthly
+topics follow under their own headings. The daily previews also appear in the
+HTML brief, even before a plan is created.
+
+Notifications now show both reading headlines. Expand an Android notification
+to see the summaries and open the brief, paper or climate article directly.
+Windows notifications show the two headlines and open the brief when clicked.
+Previews come from the same collected edition, with no additional fetch. Cached
+paper warnings and the edition date stay visible; missing articles have an
+explicit empty state. After updating, generate a brief once to populate previews.
+
 A learning routine on three timescales. The **daily** tier is already the brief
 itself — *Paper of the day* and *News of the day* are two thirds of it — so what
 this section adds is the two tiers a morning fetch cannot supply.

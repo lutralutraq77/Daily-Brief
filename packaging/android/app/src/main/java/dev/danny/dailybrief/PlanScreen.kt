@@ -35,6 +35,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -47,7 +49,7 @@ private val SLOT_HELP = mapOf(
 )
 
 @Composable
-fun PlanScreen(modifier: Modifier = Modifier) {
+fun PlanScreen(modifier: Modifier = Modifier, previews: ReadingPreviews = ReadingPreviews()) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -86,6 +88,10 @@ fun PlanScreen(modifier: Modifier = Modifier) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        Text("A little each day. A change each week. A topic each month.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        DailyReadings(previews)
         // A plan.json we could not parse is reported, never quietly replaced.
         // Test !ok FIRST and unconditionally: two of plan_state's three failure
         // returns carry no `exists` key at all, and a missing key reads as
@@ -114,9 +120,13 @@ fun PlanScreen(modifier: Modifier = Modifier) {
             return@Column
         }
 
-        StatusCard(state)
+        Text("WEEKLY · Put it into practice", style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary)
         WeeklyCard(state, onFile = { a, b, c -> act { Plan.setWeek(context, a, b, c) } },
             onScore = { v -> act { Plan.scoreWeek(context, v) } })
+        Text("MONTHLY · Go deeper", style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary)
+        StatusCard(state)
         // Local val: `state` is a delegated property, so Kotlin cannot smart cast
         // state.block across the two reads.
         val activeBlock = state.block
@@ -131,6 +141,61 @@ fun PlanScreen(modifier: Modifier = Modifier) {
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun DailyReadings(previews: ReadingPreviews) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("DAILY · Read & explore", style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary)
+        Text(
+            when {
+                previews.date.isBlank() -> "Generate a brief to see your reading previews."
+                previews.date == LocalDate.now().toString() -> "From today's brief · ${previews.date}"
+                else -> "From your last brief · ${previews.date} · Refresh for a new edition"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        ReadingCard("Paper of the day", previews.paper, "Read paper")
+        ReadingCard("Top climate article", previews.climate, "Read article")
+    }
+}
+
+@Composable
+private fun ReadingCard(label: String, preview: ReadingPreview, action: String) {
+    val uriHandler = LocalUriHandler.current
+    var expanded by remember(preview) { mutableStateOf(false) }
+    var linkError by remember(preview) { mutableStateOf(false) }
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(label, style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary)
+            Text(preview.title.ifBlank { "No preview available" },
+                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            val byline = listOf(preview.source, preview.published.take(10)).filter { it.isNotBlank() }
+            if (byline.isNotEmpty()) Text(byline.joinToString(" · "),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (preview.summary.isNotBlank()) {
+                Text(preview.summary, style = MaterialTheme.typography.bodyMedium,
+                    maxLines = if (expanded) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis)
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "Less" else "More of the preview")
+                }
+            }
+            if (preview.note.isNotBlank()) Text(preview.note, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (preview.url.startsWith("https://") || preview.url.startsWith("http://")) {
+                OutlinedButton(onClick = {
+                    linkError = runCatching { uriHandler.openUri(preview.url) }.isFailure
+                }) { Text(action) }
+            }
+            if (linkError) Text("Could not open this link. Check that a browser is available.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
     }
 }
 

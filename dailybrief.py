@@ -1382,6 +1382,20 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
     tx = secs.get("threexthree")
     if tx is not None:
         parts: list[str] = []
+        from previews import reading_previews
+        readings = reading_previews(secs, today.isoformat())
+        parts.append('<p class="kicker">Daily · Read &amp; explore</p>')
+        for key, label in (("paper", "Paper of the day"), ("climate", "Top climate article")):
+            preview = readings[key]
+            parts.append(
+                '<div class="card">'
+                f'<p class="kicker">{label}</p>'
+                + _link_or_text(_esc(preview["title"] or "No preview available"), preview["url"], "card-title")
+                + f'<p class="card-body">{_esc(preview["summary"] or preview["note"])}</p>'
+                + f'<p class="card-foot">{_esc(" · ".join(filter(None, [preview["source"], preview["published"][:10], preview["note"] if preview["title"] else ""])))}</p>'
+                + '</div>'
+            )
+        parts.append('<p class="kicker">Monthly · Go deeper</p>')
         if tx.usable:
             st = tx.data
             blk, state = st.get("block"), st.get("block_state")
@@ -1453,6 +1467,7 @@ def compose_page(cfg: dict, today: dt.date, secs: dict, notices: list[str],
                                        f"Something has to give — or shorten the session.{tail}"))
 
             wk = st["weekly"]
+            parts.append('<p class="kicker">Weekly · Three changes</p>')
             if wk["changes"]:
                 rows = []
                 for i, change in enumerate(wk["changes"], 1):
@@ -2238,6 +2253,11 @@ def cmd_run(args) -> int:
         )
     html_path.write_text(page, "utf-8")
     publish_latest(html_path)
+    from previews import reading_previews, notification_body
+    from fileio import write_text_atomic
+    previews = reading_previews(secs, today)
+    previews["html_mtime_ns"] = (BRIEFS_DIR / "latest.html").stat().st_mtime_ns
+    write_text_atomic(BRIEFS_DIR / "latest-preview.json", json.dumps(previews, ensure_ascii=False))
     prune_old(int(cfg.get("keep_days", 60)), day)
     save_state(last_run=dt.datetime.now().isoformat(timespec="seconds"), last_status="ok",
                last_brief=str(html_path), last_cost=stats.get("total_cost_usd"),
@@ -2247,7 +2267,8 @@ def cmd_run(args) -> int:
     log(f"Brief written to {html_path} ({len(markdown)} chars)")
 
     if cfg.get("toast", True):
-        send_toast("Your daily brief is ready", tldr[:180], attribution="Click to read it")
+        send_toast("Your daily brief is ready", notification_body(previews, tldr[:180]),
+                   attribution="Paper + climate · Click to read")
     if args.open or cfg.get("auto_open", False):
         open_brief(cfg, html_path)
     return 0

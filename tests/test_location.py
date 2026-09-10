@@ -19,7 +19,13 @@ import sources as S
 # land in the production log looking exactly like a genuine morning failure.
 TMP = Path(tempfile.mkdtemp(prefix="dailybrief-tests-"))
 CFG = TMP / "config.json"
-shutil.copyfile(ROOT / "config.json", CFG)
+# A clean checkout has no private config.json. Keep the Edinburgh fixture
+# explicit: the assertions below must not depend on the developer's location.
+CFG.write_text(json.dumps({
+    "location": {"city": "Edinburgh", "postcode": "", "country": "GB",
+                 "latitude": 55.9521, "longitude": -3.1965, "label": "Edinburgh"},
+    "bank_holiday_division": "scotland",
+}), encoding="utf-8")
 
 db.CONFIG_PATH = CFG
 db.STATE_PATH = TMP / "state.json"

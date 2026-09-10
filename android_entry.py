@@ -99,8 +99,10 @@ def status(home: str) -> str:
                 city = (json.load(fh).get("location") or {}).get("city") or ""
         except (OSError, ValueError):
             configured = False
+    from previews import load_previews
     return json.dumps({
         "configured": configured,
+        "previews": load_previews(home),
         "city": city,
         "has_brief": os.path.exists(latest),
         "latest": latest if os.path.exists(latest) else "",
@@ -129,8 +131,10 @@ def run_brief(home: str, force: bool = True) -> str:
         args = types.SimpleNamespace(force=force, open=False)
         code = dailybrief.cmd_run(args)
         latest = str(dailybrief.BRIEFS_DIR / "latest.html")
+        from previews import load_previews
         return json.dumps({
             "ok": code == 0,
+            "previews": load_previews(home) if code == 0 else {},
             "exit_code": code,
             "latest": latest if os.path.exists(latest) else "",
             # cmd_run only logs a `sections:` line on the success path, so on a
